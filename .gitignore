@@ -1,0 +1,172 @@
+# =====================================================
+# 🎯 ОТРЯД БОБА МАРЛИ — ИГНОРИРУЕМЫЕ ФАЙЛЫ
+# =====================================================
+# Этот файл говорит Git, какие файлы НЕ загружать на GitHub.
+# Секреты, базы данных, зависимости и мусор — всё сюда.
+# =====================================================
+
+# -----------------------------------------------------
+# 🔐 СЕКРЕТЫ И ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
+# -----------------------------------------------------
+# НИКОГДА не загружаем .env на GitHub — там пароли и ключи!
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+*.env
+
+# Но шаблон .env.example — загружаем (без секретов)
+!.env.example
+
+# -----------------------------------------------------
+# 📦 NODE.JS
+# -----------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm
+.yarn
+package-lock.json
+yarn.lock
+
+# -----------------------------------------------------
+# 💾 БАЗА ДАННЫХ
+# -----------------------------------------------------
+database/
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-shm
+*.db-wal
+server/database/
+
+# -----------------------------------------------------
+# 📸 ЗАГРУЖЕННЫЕ ФАЙЛЫ (фото, голосовые)
+# -----------------------------------------------------
+uploads/
+server/uploads/
+*.tmp
+*.temp
+
+# -----------------------------------------------------
+# 📱 FLUTTER
+# -----------------------------------------------------
+app/build/
+app/.dart_tool/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+app/.packages
+app/pubspec.lock
+app/.pub-cache/
+app/.pub/
+app/ios/Pods/
+app/ios/.symlinks/
+app/android/.gradle/
+app/android/app/debug/
+app/android/app/profile/
+app/android/app/release/
+app/**/GeneratedPluginRegistrant.*
+app/**/generated_plugin_registrant.*
+app/**/generated_plugins.cmake
+app/**/generated_plugin_registrant.cc
+app/**/generated_plugin_registrant.h
+
+# -----------------------------------------------------
+# 🖥️ IDE И РЕДАКТОРЫ
+# -----------------------------------------------------
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# -----------------------------------------------------
+# 💻 ОПЕРАЦИОННЫЕ СИСТЕМЫ
+# -----------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# -----------------------------------------------------
+# 📝 ЛОГИ
+# -----------------------------------------------------
+*.log
+logs/
+log/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# -----------------------------------------------------
+# 🗂️ ВРЕМЕННЫЕ ФАЙЛЫ
+# -----------------------------------------------------
+tmp/
+temp/
+*.tmp
+*.bak
+*.backup
+*.old
+cache/
+.cache/
+
+# -----------------------------------------------------
+# 🏗️ СБОРКА И ДИСТРИБУТИВЫ
+# -----------------------------------------------------
+dist/
+build/
+out/
+bin/
+obj/
+*.apk
+*.aab
+*.ipa
+*.app
+*.exe
+*.dll
+*.so
+*.dylib
+
+# -----------------------------------------------------
+# 🧪 ТЕСТЫ И ПОКРЫТИЕ
+# -----------------------------------------------------
+coverage/
+.nyc_output/
+*.lcov
+
+# -----------------------------------------------------
+# ⚙️ ПРОЧЕЕ
+# -----------------------------------------------------
+# Render / Koyeb / Railway
+.render/
+.koyeb/
+.railway/
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Sentry
+.sentryclirc
+
+# Firebase (создадим позже)
+google-services.json
+GoogleService-Info.plist
+firebase-debug.log
+.firebase/
+firebase-debug.log*
+firebase-debug.*.log
