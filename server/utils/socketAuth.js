@@ -1,22 +1,15 @@
 // =====================================================
-// 🔐 BMSChat — АВТОРИЗАЦИЯ SOCKET.IO
+// 🔐 BMSChat — АВТОРИЗАЦИЯ SOCKET.IO (PostgreSQL)
 // =====================================================
 // Проверяет JWT-токен при подключении к WebSocket.
+// Загружает пользователя из PostgreSQL.
 //
-// КАК РАБОТАЕТ:
-//   Клиент подключается:
-//     io("http://localhost:5000", { auth: { token: "..." } })
-//
-//   Middleware проверяет токен:
-//     - Валидный? → загружает user из БД → next()
-//     - Невалидный? → next(new Error("..."))
-//
-// БЕЗ ЭТОГО:
-//   Любой мог бы подключиться и читать чужие чаты.
+// ⚠️ Все запросы к БД — async (await pool.query)
+// ⚠️ is_approved — BOOLEAN (true/false), не 0/1
 // =====================================================
 
 const { verifyToken } = require('./jwt');
-const { db } = require('../database/init');
+const { pool } = require('../database/init');
 const logger = require('./logger');
 
 /**
@@ -30,9 +23,6 @@ async function socketAuth(socket, next) {
         // ============================================
         // 1. Извлекаем токен
         // ============================================
-        // Токен может быть в:
-        //   • socket.handshake.auth.token (современный способ)
-        //   • Authorization: Bearer <token> (заголовок)
         const token =
             socket.handshake.auth?.token ||
             socket.handshake.headers?.authorization?.replace('Bearer ', '');
@@ -58,24 +48,27 @@ async function socketAuth(socket, next) {
         }
 
         // ============================================
-        // 3. Загружаем пользователя из БД
+        // 3. Загружаем пользователя из PostgreSQL
         // ============================================
-        const user = db.prepare(`
+        const result = await pool.query(`
             SELECT id, username, display_name, avatar, status, is_approved
             FROM users
-            WHERE id = ?
-        `).get(payload.userId);
+            WHERE id = $1
+        `, [payload.userId]);
 
-        if (!user) {
+        if (result.rows.length === 0) {
             logger.warn('Socket: пользователь не найден', {
                 userId: payload.userId,
             });
             return next(new Error('Пользователь не найден'));
         }
 
+        const user = result.rows[0];
+
         // ============================================
         // 4. Проверяем подтверждение
         // ============================================
+        // ⚠️ PostgreSQL: is_approved — BOOLEAN (true/false)
         if (!user.is_approved) {
             logger.warn('Socket: аккаунт не подтверждён', {
                 userId: user.id,
@@ -86,7 +79,6 @@ async function socketAuth(socket, next) {
         // ============================================
         // 5. Сохраняем пользователя в socket.data
         // ============================================
-        // Доступ через socket.data.user в handlers.js
         socket.data.user = user;
 
         logger.info('Socket: авторизация успешна', {
@@ -94,7 +86,7 @@ async function socketAuth(socket, next) {
             username: user.username,
         });
 
-        next(); // ✅ Пропускаем
+        next();
 
     } catch (error) {
         logger.error('Socket: ошибка авторизации', error);

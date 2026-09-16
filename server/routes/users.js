@@ -1,23 +1,11 @@
 // =====================================================
-// 👥 BMSChat — РОУТЫ ПОЛЬЗОВАТЕЛЕЙ
-// =====================================================
-// Управление пользователями, ролями, подтверждением.
-//
-// ПРАВА:
-//   • Читать список — любой авторизованный
-//   • Подтверждать новичков — Командир, Admin
-//   • Назначать командиров — ТОЛЬКО Admin
-//   • Повышать/понижать роли — Admin (любые) и Командир (до бойца)
-//
-// ЛОГИКА ПОДТВЕРЖДЕНИЯ (упрощённая):
-//   Регистрация → is_approved=0 → статус "ожидает"
-//   Командир подтверждает → is_approved=1 + роль «Боец»
+// 👥 BMSChat — РОУТЫ ПОЛЬЗОВАТЕЛЕЙ (PostgreSQL)
 // =====================================================
 
 const express = require('express');
 const router = express.Router();
 
-const { db } = require('../database/init');
+const { pool } = require('../database/init');
 const { authMiddleware } = require('../middleware/auth');
 const {
     requirePermission,
@@ -33,115 +21,98 @@ const logger = require('../utils/logger');
 // =====================================================
 
 /**
- * Гарантирует, что роль с указанным именем существует.
- * Если нет — создаёт с базовыми правами.
- * 
- * @param {string} roleName
- * @returns {number} ID роли
+ * Гарантирует, что роль существует
  */
-function ensureRole(roleName) {
-    let role = db.prepare('SELECT id FROM roles WHERE name = ?').get(roleName);
-    if (role) return role.id;
+async function ensureRole(roleName) {
+    const existing = await pool.query('SELECT id FROM roles WHERE name = $1', [roleName]);
+    if (existing.rows.length > 0) return existing.rows[0].id;
 
-    // Создаём базовую роль
     const defaults = {
         'Новобранец': {
             description: 'Новичок на испытательном сроке',
             color: '#FED100', icon: '🆕', priority: 10,
-            can_write_general: 0, can_write_private: 0, can_write_to_commander: 1,
-            can_create_feed: 0, can_approve_users: 0, can_manage_roles: 0,
-            can_manage_users: 0, can_assign_commanders: 0,
+            can_write_general: false, can_write_private: false, can_write_to_commander: true,
+            can_create_feed: false, can_approve_users: false, can_manage_roles: false,
+            can_manage_users: false, can_assign_commanders: false,
         },
         'Боец': {
             description: 'Полноправный боец команды',
             color: '#00843D', icon: '🪖', priority: 50,
-            can_write_general: 1, can_write_private: 1, can_write_to_commander: 0,
-            can_create_feed: 0, can_approve_users: 0, can_manage_roles: 0,
-            can_manage_users: 0, can_assign_commanders: 0,
+            can_write_general: true, can_write_private: true, can_write_to_commander: false,
+            can_create_feed: false, can_approve_users: false, can_manage_roles: false,
+            can_manage_users: false, can_assign_commanders: false,
         },
     };
 
     const cfg = defaults[roleName] || {
         description: null, color: '#FED100', icon: '🎖️', priority: 0,
-        can_write_general: 0, can_write_private: 0, can_write_to_commander: 0,
-        can_create_feed: 0, can_approve_users: 0, can_manage_roles: 0,
-        can_manage_users: 0, can_assign_commanders: 0,
+        can_write_general: false, can_write_private: false, can_write_to_commander: false,
+        can_create_feed: false, can_approve_users: false, can_manage_roles: false,
+        can_manage_users: false, can_assign_commanders: false,
     };
 
-    const result = db.prepare(`
+    const result = await pool.query(`
         INSERT INTO roles (
             name, description, color, icon, priority,
             can_write_general, can_write_private, can_write_to_commander,
             can_create_feed, can_approve_users, can_manage_roles,
-            can_manage_users, can_assign_commanders,
-            is_system
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-    `).run(
-        roleName,
-        cfg.description,
-        cfg.color,
-        cfg.icon,
-        cfg.priority,
-        cfg.can_write_general,
-        cfg.can_write_private,
-        cfg.can_write_to_commander,
-        cfg.can_create_feed,
-        cfg.can_approve_users,
-        cfg.can_manage_roles,
-        cfg.can_manage_users,
-        cfg.can_assign_commanders
-    );
+            can_manage_users, can_assign_commanders, is_system
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        RETURNING id
+    `, [
+        roleName, cfg.description, cfg.color, cfg.icon, cfg.priority,
+        cfg.can_write_general, cfg.can_write_private, cfg.can_write_to_commander,
+        cfg.can_create_feed, cfg.can_approve_users, cfg.can_manage_roles,
+        cfg.can_manage_users, cfg.can_assign_commanders, true,
+    ]);
 
     logger.success(`Роль "${roleName}" создана автоматически`, {
-        roleId: result.lastInsertRowid,
+        roleId: result.rows[0].id,
     });
 
-    return result.lastInsertRowid;
+    return result.rows[0].id;
 }
 
-/**
- * Назначает роль пользователю (если её нет).
- */
-function assignRoleToUser(userId, roleId, assignedBy) {
-    db.prepare(`
-        INSERT OR IGNORE INTO user_roles (user_id, role_id, assigned_by)
-        VALUES (?, ?, ?)
-    `).run(userId, roleId, assignedBy);
+async function assignRoleToUser(userId, roleId, assignedBy) {
+    await pool.query(`
+        INSERT INTO user_roles (user_id, role_id, assigned_by)
+        VALUES ($1, $2, $3)
+        ON CONFLICT DO NOTHING
+    `, [userId, roleId, assignedBy]);
 }
 
-/**
- * Убирает все роли пользователя.
- */
-function clearUserRoles(userId) {
-    db.prepare('DELETE FROM user_roles WHERE user_id = ?').run(userId);
+async function clearUserRoles(userId) {
+    await pool.query('DELETE FROM user_roles WHERE user_id = $1', [userId]);
 }
 
 // =====================================================
-// 👥 GET /api/users — Список всех пользователей
+// 👥 GET /api/users
 // =====================================================
-router.get('/', authMiddleware, (req, res) => {
+router.get('/', authMiddleware, async (req, res) => {
     try {
-        const users = db.prepare(`
+        const result = await pool.query(`
             SELECT id, username, display_name, avatar, status, last_seen, is_approved
             FROM users
             ORDER BY 
                 CASE status WHEN 'online' THEN 0 ELSE 1 END,
                 display_name ASC
-        `).all();
+        `);
 
-        // Добавляем роли
-        const result = users.map(user => ({
-            ...user,
-            roles: getUserRoles(user.id).map(r => ({
-                id: r.id,
-                name: r.name,
-                color: r.color,
-                icon: r.icon,
-                priority: r.priority,
-            })),
+        const users = await Promise.all(result.rows.map(async (user) => {
+            const roles = await getUserRoles(user.id);
+            return {
+                ...user,
+                roles: roles.map((r) => ({
+                    id: r.id,
+                    name: r.name,
+                    color: r.color,
+                    icon: r.icon,
+                    priority: r.priority,
+                })),
+            };
         }));
 
-        res.json({ users: result });
+        res.json({ users });
     } catch (error) {
         logger.error('Ошибка /users', error);
         res.status(500).json({ error: 'Ошибка сервера' });
@@ -149,22 +120,22 @@ router.get('/', authMiddleware, (req, res) => {
 });
 
 // =====================================================
-// ⏳ GET /api/users/pending/list — Неподтверждённые
+// ⏳ GET /api/users/pending/list
 // =====================================================
 router.get(
     '/pending/list',
     authMiddleware,
     requirePermission('can_approve_users'),
-    (req, res) => {
+    async (req, res) => {
         try {
-            const users = db.prepare(`
+            const result = await pool.query(`
                 SELECT id, username, display_name, created_at
                 FROM users
-                WHERE is_approved = 0
+                WHERE is_approved = FALSE
                 ORDER BY created_at ASC
-            `).all();
+            `);
 
-            res.json({ pending: users });
+            res.json({ pending: result.rows });
         } catch (error) {
             logger.error('Ошибка pending', error);
             res.status(500).json({ error: 'Ошибка сервера' });
@@ -173,15 +144,12 @@ router.get(
 );
 
 // =====================================================
-// 🎭 GET /api/users/roles/list — Список всех ролей
+// 🎭 GET /api/users/roles/list
 // =====================================================
-router.get('/roles/list', authMiddleware, (req, res) => {
+router.get('/roles/list', authMiddleware, async (req, res) => {
     try {
-        const roles = db.prepare(`
-            SELECT * FROM roles ORDER BY priority DESC
-        `).all();
-
-        res.json({ roles });
+        const result = await pool.query('SELECT * FROM roles ORDER BY priority DESC');
+        res.json({ roles: result.rows });
     } catch (error) {
         logger.error('Ошибка списка ролей', error);
         res.status(500).json({ error: 'Ошибка сервера' });
@@ -189,28 +157,28 @@ router.get('/roles/list', authMiddleware, (req, res) => {
 });
 
 // =====================================================
-// 👤 GET /api/users/:id — Профиль
+// 👤 GET /api/users/:id
 // =====================================================
-router.get('/:id', authMiddleware, (req, res) => {
+router.get('/:id', authMiddleware, async (req, res) => {
     try {
         const userId = parseInt(req.params.id, 10);
 
-        const user = db.prepare(`
+        const result = await pool.query(`
             SELECT id, username, display_name, avatar, status, last_seen,
                    is_approved, created_at
-            FROM users WHERE id = ?
-        `).get(userId);
+            FROM users WHERE id = $1
+        `, [userId]);
 
-        if (!user) {
+        if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Пользователь не найден' });
         }
 
-        const roles = getUserRoles(userId);
+        const roles = await getUserRoles(userId);
 
         res.json({
             user: {
-                ...user,
-                roles: roles.map(r => ({
+                ...result.rows[0],
+                roles: roles.map((r) => ({
                     id: r.id,
                     name: r.name,
                     color: r.color,
@@ -226,45 +194,41 @@ router.get('/:id', authMiddleware, (req, res) => {
 });
 
 // =====================================================
-// ✅ POST /api/users/:id/approve — Подтвердить (упрощённая логика)
-// =====================================================
-// Что делает:
-//   1. is_approved = 1
-//   2. Выдаёт роль «Боец» (сразу полные права)
-//   3. Добавляет в общий чат
-//   4. Создаёт событие в ленте
+// ✅ POST /api/users/:id/approve
 // =====================================================
 router.post(
     '/:id/approve',
     authMiddleware,
     requirePermission('can_approve_users'),
-    (req, res) => {
+    async (req, res) => {
         try {
             const userId = parseInt(req.params.id, 10);
 
-            const user = db.prepare(`
+            const userResult = await pool.query(`
                 SELECT id, username, display_name, is_approved 
-                FROM users WHERE id = ?
-            `).get(userId);
+                FROM users WHERE id = $1
+            `, [userId]);
 
-            if (!user) {
+            if (userResult.rows.length === 0) {
                 return res.status(404).json({ error: 'Пользователь не найден' });
             }
+
+            const user = userResult.rows[0];
 
             if (user.is_approved) {
                 return res.status(400).json({ error: 'Пользователь уже подтверждён' });
             }
 
-            // 1. Подтверждаем
-            db.prepare(`
+            // Подтверждаем
+            await pool.query(`
                 UPDATE users 
-                SET is_approved = 1, approved_by = ? 
-                WHERE id = ?
-            `).run(req.user.id, userId);
+                SET is_approved = TRUE, approved_by = $1 
+                WHERE id = $2
+            `, [req.user.id, userId]);
 
-            // 2. Выдаём роль «Боец» (упрощённая логика)
-            const soldierRoleId = ensureRole('Боец');
-            assignRoleToUser(userId, soldierRoleId, req.user.id);
+            // Роль «Боец»
+            const soldierRoleId = await ensureRole('Боец');
+            await assignRoleToUser(userId, soldierRoleId, req.user.id);
 
             logger.success('Пользователь подтверждён', {
                 userId,
@@ -272,35 +236,36 @@ router.post(
                 roleAssigned: 'Боец',
             });
 
-            // 3. Добавляем в общий чат
-            const generalChat = db.prepare(`
-                SELECT id FROM chats WHERE type = 'general' LIMIT 1
-            `).get();
+            // Добавляем в общий чат
+            const generalChat = await pool.query(
+                `SELECT id FROM chats WHERE type = 'general' LIMIT 1`
+            );
 
-            if (generalChat) {
-                db.prepare(`
-                    INSERT OR IGNORE INTO chat_members (chat_id, user_id, role)
-                    VALUES (?, ?, 'member')
-                `).run(generalChat.id, userId);
+            if (generalChat.rows.length > 0) {
+                await pool.query(`
+                    INSERT INTO chat_members (chat_id, user_id, role)
+                    VALUES ($1, $2, 'member')
+                    ON CONFLICT DO NOTHING
+                `, [generalChat.rows[0].id, userId]);
             }
 
-            // 4. Событие в ленте
-            db.prepare(`
+            // Событие в ленте
+            await pool.query(`
                 INSERT INTO feed_events (type, title, content, author_id, target_id)
-                VALUES ('new_member', ?, ?, ?, ?)
-            `).run(
+                VALUES ('new_member', $1, $2, $3, $4)
+            `, [
                 `🎉 Новый боец: ${user.display_name}`,
                 `Добро пожаловать в команду!`,
                 req.user.id,
-                userId
-            );
+                userId,
+            ]);
 
             res.json({
                 message: 'Пользователь подтверждён',
                 details: {
                     userId,
                     roleAssigned: 'Боец',
-                    addedToGeneralChat: !!generalChat,
+                    addedToGeneralChat: generalChat.rows.length > 0,
                 },
             });
         } catch (error) {
@@ -311,30 +276,32 @@ router.post(
 );
 
 // =====================================================
-// ❌ POST /api/users/:id/reject — Отклонить
+// ❌ POST /api/users/:id/reject
 // =====================================================
 router.post(
     '/:id/reject',
     authMiddleware,
     requirePermission('can_approve_users'),
-    (req, res) => {
+    async (req, res) => {
         try {
             const userId = parseInt(req.params.id, 10);
 
-            const user = db.prepare('SELECT id, is_approved FROM users WHERE id = ?').get(userId);
+            const result = await pool.query(
+                'SELECT id, is_approved FROM users WHERE id = $1',
+                [userId]
+            );
 
-            if (!user) {
+            if (result.rows.length === 0) {
                 return res.status(404).json({ error: 'Пользователь не найден' });
             }
 
-            if (user.is_approved) {
+            if (result.rows[0].is_approved) {
                 return res.status(400).json({
                     error: 'Нельзя отклонить подтверждённого пользователя',
                 });
             }
 
-            // Удаляем
-            db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+            await pool.query('DELETE FROM users WHERE id = $1', [userId]);
 
             logger.info('Заявка отклонена', {
                 userId,
@@ -350,26 +317,26 @@ router.post(
 );
 
 // =====================================================
-// 👑 POST /api/users/:id/assign-commander — Назначить командиром
-// =====================================================
-// ⚠️ ТОЛЬКО ADMIN может назначать командиров.
+// 👑 POST /api/users/:id/assign-commander
 // =====================================================
 router.post(
     '/:id/assign-commander',
     authMiddleware,
     requireAdmin(),
-    (req, res) => {
+    async (req, res) => {
         try {
             const userId = parseInt(req.params.id, 10);
 
-            const user = db.prepare(`
+            const userResult = await pool.query(`
                 SELECT id, username, display_name, is_approved 
-                FROM users WHERE id = ?
-            `).get(userId);
+                FROM users WHERE id = $1
+            `, [userId]);
 
-            if (!user) {
+            if (userResult.rows.length === 0) {
                 return res.status(404).json({ error: 'Пользователь не найден' });
             }
+
+            const user = userResult.rows[0];
 
             if (!user.is_approved) {
                 return res.status(400).json({
@@ -377,21 +344,19 @@ router.post(
                 });
             }
 
-            // Проверяем, не командир ли уже
-            const alreadyCommander = db.prepare(`
+            const alreadyCommander = await pool.query(`
                 SELECT 1 FROM user_roles ur
                 INNER JOIN roles r ON r.id = ur.role_id
-                WHERE ur.user_id = ? AND r.name = 'Командир'
+                WHERE ur.user_id = $1 AND r.name = 'Командир'
                 LIMIT 1
-            `).get(userId);
+            `, [userId]);
 
-            if (alreadyCommander) {
+            if (alreadyCommander.rows.length > 0) {
                 return res.status(400).json({ error: 'Пользователь уже командир' });
             }
 
-            // Выдаём роль
-            const commanderRoleId = ensureRole('Командир');
-            assignRoleToUser(userId, commanderRoleId, req.user.id);
+            const commanderRoleId = await ensureRole('Командир');
+            await assignRoleToUser(userId, commanderRoleId, req.user.id);
 
             logger.success('Командир назначен', {
                 userId,
@@ -410,39 +375,47 @@ router.post(
 );
 
 // =====================================================
-// 🚫 POST /api/users/:id/remove-commander — Снять командира
-// =====================================================
-// ⚠️ ТОЛЬКО ADMIN.
+// 🚫 POST /api/users/:id/remove-commander
 // =====================================================
 router.post(
     '/:id/remove-commander',
     authMiddleware,
     requireAdmin(),
-    (req, res) => {
+    async (req, res) => {
         try {
             const userId = parseInt(req.params.id, 10);
 
-            const user = db.prepare('SELECT id, display_name FROM users WHERE id = ?').get(userId);
-            if (!user) {
+            const userResult = await pool.query(
+                'SELECT id, display_name FROM users WHERE id = $1',
+                [userId]
+            );
+
+            if (userResult.rows.length === 0) {
                 return res.status(404).json({ error: 'Пользователь не найден' });
             }
 
+            const user = userResult.rows[0];
+
             // Убираем роль «Командир»
-            const commanderRole = db.prepare(`SELECT id FROM roles WHERE name = 'Командир'`).get();
-            if (commanderRole) {
-                db.prepare(`
-                    DELETE FROM user_roles WHERE user_id = ? AND role_id = ?
-                `).run(userId, commanderRole.id);
+            const commanderRole = await pool.query(
+                `SELECT id FROM roles WHERE name = 'Командир'`
+            );
+
+            if (commanderRole.rows.length > 0) {
+                await pool.query(`
+                    DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2
+                `, [userId, commanderRole.rows[0].id]);
             }
 
-            // Выдаём роль «Боец», если других ролей нет
-            const remainingRoles = db.prepare(`
-                SELECT COUNT(*) as cnt FROM user_roles WHERE user_id = ?
-            `).get(userId).cnt;
+            // Если ролей не осталось — выдаём «Боец»
+            const remaining = await pool.query(
+                'SELECT COUNT(*) as cnt FROM user_roles WHERE user_id = $1',
+                [userId]
+            );
 
-            if (remainingRoles === 0) {
-                const soldierRoleId = ensureRole('Боец');
-                assignRoleToUser(userId, soldierRoleId, req.user.id);
+            if (parseInt(remaining.rows[0].cnt, 10) === 0) {
+                const soldierRoleId = await ensureRole('Боец');
+                await assignRoleToUser(userId, soldierRoleId, req.user.id);
             }
 
             logger.info('Командир снят', {
@@ -461,27 +434,28 @@ router.post(
 );
 
 // =====================================================
-// 🆕 POST /api/users/:id/make-recruit — Понизить до новобранца
-// =====================================================
-// Может: Командир или Admin.
+// 🆕 POST /api/users/:id/make-recruit
 // =====================================================
 router.post(
     '/:id/make-recruit',
     authMiddleware,
     requireAnyPermission(['can_approve_users']),
-    (req, res) => {
+    async (req, res) => {
         try {
             const userId = parseInt(req.params.id, 10);
 
-            const user = db.prepare('SELECT id, display_name FROM users WHERE id = ?').get(userId);
-            if (!user) {
+            const userResult = await pool.query(
+                'SELECT id, display_name FROM users WHERE id = $1',
+                [userId]
+            );
+
+            if (userResult.rows.length === 0) {
                 return res.status(404).json({ error: 'Пользователь не найден' });
             }
 
-            // Убираем все роли и выдаём «Новобранец»
-            clearUserRoles(userId);
-            const recruitRoleId = ensureRole('Новобранец');
-            assignRoleToUser(userId, recruitRoleId, req.user.id);
+            await clearUserRoles(userId);
+            const recruitRoleId = await ensureRole('Новобранец');
+            await assignRoleToUser(userId, recruitRoleId, req.user.id);
 
             logger.info('Пользователь понижен до новобранца', {
                 userId,
@@ -489,7 +463,7 @@ router.post(
             });
 
             res.json({
-                message: `${user.display_name} стал новобранцем`,
+                message: `${userResult.rows[0].display_name} стал новобранцем`,
             });
         } catch (error) {
             logger.error('Ошибка понижения', error);
@@ -499,15 +473,13 @@ router.post(
 );
 
 // =====================================================
-// 🎭 POST /api/users/:id/set-role — Установить роль
-// =====================================================
-// ⚠️ ТОЛЬКО ADMIN.
+// 🎭 POST /api/users/:id/set-role
 // =====================================================
 router.post(
     '/:id/set-role',
     authMiddleware,
     requireAdmin(),
-    (req, res) => {
+    async (req, res) => {
         try {
             const userId = parseInt(req.params.id, 10);
             const { roleName } = req.body;
@@ -516,20 +488,26 @@ router.post(
                 return res.status(400).json({ error: 'roleName обязателен' });
             }
 
-            const user = db.prepare('SELECT id, display_name FROM users WHERE id = ?').get(userId);
-            if (!user) {
+            const userResult = await pool.query(
+                'SELECT id, display_name FROM users WHERE id = $1',
+                [userId]
+            );
+
+            if (userResult.rows.length === 0) {
                 return res.status(404).json({ error: 'Пользователь не найден' });
             }
 
-            // Проверяем, что роль существует
-            const role = db.prepare('SELECT id, name FROM roles WHERE name = ?').get(roleName);
-            if (!role) {
+            const roleResult = await pool.query(
+                'SELECT id, name FROM roles WHERE name = $1',
+                [roleName]
+            );
+
+            if (roleResult.rows.length === 0) {
                 return res.status(404).json({ error: `Роль "${roleName}" не найдена` });
             }
 
-            // Убираем все роли и выдаём новую
-            clearUserRoles(userId);
-            assignRoleToUser(userId, role.id, req.user.id);
+            await clearUserRoles(userId);
+            await assignRoleToUser(userId, roleResult.rows[0].id, req.user.id);
 
             logger.success('Роль установлена', {
                 userId,
@@ -538,7 +516,7 @@ router.post(
             });
 
             res.json({
-                message: `Роль "${roleName}" установлена для ${user.display_name}`,
+                message: `Роль "${roleName}" установлена для ${userResult.rows[0].display_name}`,
             });
         } catch (error) {
             logger.error('Ошибка установки роли', error);
@@ -548,32 +526,42 @@ router.post(
 );
 
 // =====================================================
-// 🎭 POST /api/users/:id/roles/:roleId — Назначить роль
+// 🎭 POST /api/users/:id/roles/:roleId
 // =====================================================
 router.post(
     '/:id/roles/:roleId',
     authMiddleware,
     requireAdmin(),
-    (req, res) => {
+    async (req, res) => {
         try {
             const userId = parseInt(req.params.id, 10);
             const roleId = parseInt(req.params.roleId, 10);
 
-            const user = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
-            if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
+            const userResult = await pool.query(
+                'SELECT id FROM users WHERE id = $1',
+                [userId]
+            );
+            if (userResult.rows.length === 0) {
+                return res.status(404).json({ error: 'Пользователь не найден' });
+            }
 
-            const role = db.prepare('SELECT id, name FROM roles WHERE id = ?').get(roleId);
-            if (!role) return res.status(404).json({ error: 'Роль не найдена' });
+            const roleResult = await pool.query(
+                'SELECT id, name FROM roles WHERE id = $1',
+                [roleId]
+            );
+            if (roleResult.rows.length === 0) {
+                return res.status(404).json({ error: 'Роль не найдена' });
+            }
 
-            assignRoleToUser(userId, roleId, req.user.id);
+            await assignRoleToUser(userId, roleId, req.user.id);
 
             logger.success('Роль назначена', {
                 userId,
-                roleName: role.name,
+                roleName: roleResult.rows[0].name,
                 assignedBy: req.user.id,
             });
 
-            res.json({ message: `Роль "${role.name}" назначена` });
+            res.json({ message: `Роль "${roleResult.rows[0].name}" назначена` });
         } catch (error) {
             logger.error('Ошибка назначения роли', error);
             res.status(500).json({ error: 'Ошибка сервера' });
@@ -582,38 +570,44 @@ router.post(
 );
 
 // =====================================================
-// 🎭 DELETE /api/users/:id/roles/:roleId — Убрать роль
+// 🎭 DELETE /api/users/:id/roles/:roleId
 // =====================================================
 router.delete(
     '/:id/roles/:roleId',
     authMiddleware,
     requireAdmin(),
-    (req, res) => {
+    async (req, res) => {
         try {
             const userId = parseInt(req.params.id, 10);
             const roleId = parseInt(req.params.roleId, 10);
 
-            const role = db.prepare('SELECT id, name, is_system FROM roles WHERE id = ?').get(roleId);
-            if (!role) {
+            const roleResult = await pool.query(
+                'SELECT id, name, is_system FROM roles WHERE id = $1',
+                [roleId]
+            );
+
+            if (roleResult.rows.length === 0) {
                 return res.status(404).json({ error: 'Роль не найдена' });
             }
 
-            // Защита системных ролей
-            if (role.is_system) {
-                const count = db.prepare(`
-                    SELECT COUNT(*) as cnt FROM user_roles WHERE role_id = ?
-                `).get(roleId);
+            const role = roleResult.rows[0];
 
-                if (count.cnt <= 1) {
+            if (role.is_system) {
+                const count = await pool.query(
+                    'SELECT COUNT(*) as cnt FROM user_roles WHERE role_id = $1',
+                    [roleId]
+                );
+
+                if (parseInt(count.rows[0].cnt, 10) <= 1) {
                     return res.status(400).json({
                         error: `Нельзя убрать системную роль "${role.name}" у последнего пользователя`,
                     });
                 }
             }
 
-            db.prepare(`
-                DELETE FROM user_roles WHERE user_id = ? AND role_id = ?
-            `).run(userId, roleId);
+            await pool.query(`
+                DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2
+            `, [userId, roleId]);
 
             logger.info('Роль убрана', {
                 userId,

@@ -1,16 +1,5 @@
 // =====================================================
-// 🎯 BMSChat — ГЛАВНЫЙ ФАЙЛ СЕРВЕРА
-// =====================================================
-// Точка входа. Собирает всё вместе:
-//   1. Express-приложение
-//   2. Middleware (CORS, JSON, статика)
-//   3. Роуты (auth, users, chats, messages, upload)
-//   4. Socket.IO (WebSocket)
-//   5. Health-check (для UptimeRobot)
-//
-// Запуск:
-//   npm run dev   # с автоперезапуском
-//   npm start     # обычно
+// 🎯 BMSChat — ГЛАВНЫЙ ФАЙЛ СЕРВЕРА (PostgreSQL)
 // =====================================================
 
 const express = require('express');
@@ -19,21 +8,16 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 
-// Конфигурация
 const config = require('./config');
 const logger = require('./utils/logger');
-
-// Инициализация Socket.IO
+const { pool } = require('./database/init');
 const { initSocket } = require('./socket');
 
 // =====================================================
-// 🚀 СОЗДАНИЕ EXPRESS-ПРИЛОЖЕНИЯ
+// 🚀 EXPRESS
 // =====================================================
 const app = express();
 
-// -----------------------------------------------------
-// 🌍 CORS
-// -----------------------------------------------------
 app.use(cors({
     origin: config.CORS_ORIGIN || '*',
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -41,27 +25,18 @@ app.use(cors({
     credentials: true,
 }));
 
-// -----------------------------------------------------
-// 📦 JSON-парсер
-// -----------------------------------------------------
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// -----------------------------------------------------
-// 📸 СТАТИЧЕСКАЯ ПАПКА UPLOADS
-// -----------------------------------------------------
+// Статика uploads
 const uploadsDir = path.join(__dirname, config.UPLOAD_DIR);
-
 if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
     logger.info('Создана папка uploads', { path: uploadsDir });
 }
-
 app.use('/uploads', express.static(uploadsDir));
 
-// -----------------------------------------------------
-// 📝 ЛОГИРОВАНИЕ (только не-GET в development)
-// -----------------------------------------------------
+// Логирование в development
 if (config.IS_DEVELOPMENT) {
     app.use((req, res, next) => {
         if (req.method !== 'GET') {
@@ -74,36 +49,40 @@ if (config.IS_DEVELOPMENT) {
 // =====================================================
 // 🩺 HEALTH-CHECK
 // =====================================================
-app.get('/api/health', (req, res) => {
-    res.json({
-        status: 'healthy',
-        uptime: process.uptime(),
-        timestamp: new Date().toISOString(),
-        version: '1.0.0',
-    });
+app.get('/api/health', async (req, res) => {
+    try {
+        const dbCheck = await pool.query('SELECT NOW() as now');
+        res.json({
+            status: 'healthy',
+            uptime: process.uptime(),
+            timestamp: new Date().toISOString(),
+            database: 'connected',
+            dbTime: dbCheck.rows[0].now,
+            version: '1.0.0',
+        });
+    } catch (error) {
+        res.status(500).json({
+            status: 'unhealthy',
+            error: error.message,
+        });
+    }
 });
 
 // =====================================================
-// 📡 ПОДКЛЮЧЕНИЕ РОУТОВ
+// 📡 РОУТЫ
 // =====================================================
-
-// Авторизация: регистрация, вход, /me, logout
 const authRoutes = require('./routes/auth');
 app.use('/api/auth', authRoutes);
 
-// Пользователи: список, профили, роли, подтверждение
 const usersRoutes = require('./routes/users');
 app.use('/api/users', usersRoutes);
 
-// Чаты: список, создание, участники
 const chatsRoutes = require('./routes/chats');
 app.use('/api/chats', chatsRoutes);
 
-// Сообщения: история, отправка, редактирование, реакции
 const messagesRoutes = require('./routes/messages');
 app.use('/api/messages', messagesRoutes);
 
-// Загрузка файлов: фото, голосовые
 const uploadRoutes = require('./routes/upload');
 app.use('/api/upload', uploadRoutes);
 
@@ -142,7 +121,7 @@ app.use((err, req, res, next) => {
 });
 
 // =====================================================
-// 🌐 HTTP-СЕРВЕР + SOCKET.IO
+// 🌐 HTTP + SOCKET.IO
 // =====================================================
 const server = http.createServer(app);
 const io = initSocket(server);
@@ -154,47 +133,69 @@ app.set('io', io);
 const PORT = config.PORT;
 const HOST = config.HOST;
 
-server.listen(PORT, HOST, () => {
-    console.log('');
-    console.log('═══════════════════════════════════════');
-    console.log('🎯 BMSChat — СЕРВЕР ЗАПУЩЕН');
-    console.log('═══════════════════════════════════════');
-    console.log(`🚀 Порт:      ${PORT}`);
-    console.log(`📡 HTTP:      http://localhost:${PORT}`);
-    console.log(`📡 API:       http://localhost:${PORT}/api`);
-    console.log(`🔌 WebSocket: ws://localhost:${PORT}`);
-    console.log(`📁 Uploads:   http://localhost:${PORT}/uploads`);
-    console.log(`🌍 CORS:      ${config.CORS_ORIGIN}`);
-    console.log('');
-    console.log('📋 Проверка:');
-    console.log(`   curl http://localhost:${PORT}/api/health`);
-    console.log('');
-    console.log('🔐 Данные для входа:');
-    console.log('   Логин:  admin');
-    console.log('   Пароль: admin_secret_2024');
-    console.log('');
-    console.log('⛔ Для остановки: Ctrl+C');
-    console.log('═══════════════════════════════════════');
-    console.log('');
+async function start() {
+    try {
+        // Проверка подключения к PostgreSQL
+        console.log('');
+        console.log('🔌 Проверка подключения к PostgreSQL...');
+        const result = await pool.query('SELECT NOW() as now, version() as ver');
+        console.log('✅ PostgreSQL подключён');
+        console.log(`   Время сервера: ${result.rows[0].now}`);
+        console.log(`   Версия: ${result.rows[0].ver.split(' ').slice(0, 2).join(' ')}`);
 
-    logger.success('Сервер запущен', {
-        port: PORT,
-        host: HOST,
-        env: config.NODE_ENV,
-    });
-});
+        server.listen(PORT, HOST, () => {
+            console.log('');
+            console.log('═══════════════════════════════════════');
+            console.log('🎯 BMSChat — СЕРВЕР ЗАПУЩЕН');
+            console.log('═══════════════════════════════════════');
+            console.log(`🚀 Порт:      ${PORT}`);
+            console.log(`📡 HTTP:      http://localhost:${PORT}`);
+            console.log(`📡 API:       http://localhost:${PORT}/api`);
+            console.log(`🔌 WebSocket: ws://localhost:${PORT}`);
+            console.log(`📁 Uploads:   http://localhost:${PORT}/uploads`);
+            console.log(`🌍 CORS:      ${config.CORS_ORIGIN}`);
+            console.log(`💾 БД:        PostgreSQL`);
+            console.log('');
+            console.log('📋 Проверка:');
+            console.log(`   curl http://localhost:${PORT}/api/health`);
+            console.log('');
+            console.log('🔐 Данные для входа:');
+            console.log('   Логин:  admin');
+            console.log('   Пароль: admin_secret_2024');
+            console.log('');
+            console.log('⛔ Для остановки: Ctrl+C');
+            console.log('═══════════════════════════════════════');
+            console.log('');
+
+            logger.success('Сервер запущен', {
+                port: PORT,
+                host: HOST,
+                env: config.NODE_ENV,
+            });
+        });
+    } catch (error) {
+        console.error('');
+        console.error('❌ ОШИБКА ЗАПУСКА СЕРВЕРА:');
+        console.error(error.message);
+        logger.error('Ошибка запуска', error);
+        process.exit(1);
+    }
+}
+
+start();
 
 // =====================================================
 // 🛑 КОРРЕКТНАЯ ОСТАНОВКА
 // =====================================================
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
     console.log('');
     logger.info('Остановка сервера...');
 
-    io.close(() => {
+    io.close(async () => {
         logger.info('Socket.IO остановлен');
 
-        server.close(() => {
+        server.close(async () => {
+            await pool.end();
             logger.success('Сервер остановлен');
             process.exit(0);
         });
@@ -215,7 +216,4 @@ process.on('unhandledRejection', (reason, promise) => {
     logger.error('Unhandled Rejection', reason);
 });
 
-// =====================================================
-// 📤 ЭКСПОРТ
-// =====================================================
 module.exports = { app, server, io };

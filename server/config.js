@@ -1,30 +1,22 @@
 // =====================================================
 // 🎯 BMSChat — КОНФИГУРАЦИЯ СЕРВЕРА
 // =====================================================
-// Этот файл:
-//   1. Читает переменные из .env
-//   2. Проверяет обязательные переменные
-//   3. Предупреждает о стандартных значениях
-//   4. Экспортирует всё в удобном виде
+// Читает переменные из .env, проверяет обязательные,
+// экспортирует всё в удобном виде.
 //
-// Использование:
-//   const config = require('./config');
-//   console.log(config.PORT);              // 5000
-//   console.log(config.PASSWORD_PEPPER);   // '...'
+// PostgreSQL:
+//   • DATABASE_URL — строка подключения (обязательна)
 // =====================================================
 
-// Загружаем переменные из .env
 require('dotenv').config();
 
 // =====================================================
 // ⚠️ ПРОВЕРКА ОБЯЗАТЕЛЬНЫХ ПЕРЕМЕННЫХ
 // =====================================================
-// Если чего-то не хватает — сервер не запустится.
-// Это лучше, чем молча работать с дефолтными значениями.
-
 const requiredEnvVars = [
     'JWT_SECRET',
     'PASSWORD_PEPPER',
+    'DATABASE_URL',       // ← обязательно для PostgreSQL
 ];
 
 const missingVars = requiredEnvVars.filter(
@@ -49,8 +41,6 @@ if (missingVars.length > 0) {
 // =====================================================
 // ⚠️ ПРЕДУПРЕЖДЕНИЯ О СТАНДАРТНЫХ ЗНАЧЕНИЯХ
 // =====================================================
-// Не блокируем запуск, но громко предупреждаем.
-
 const DEFAULT_JWT_SECRET = 'boba_marley_rasta_secret_2024_change_me_in_production';
 const DEFAULT_PEPPER = 'boba_marley_pepper_change_me_in_production_2024_rasta_love';
 
@@ -58,7 +48,6 @@ if (process.env.JWT_SECRET === DEFAULT_JWT_SECRET) {
     console.warn('');
     console.warn('⚠️  ВНИМАНИЕ: Используется стандартный JWT_SECRET!');
     console.warn('⚠️  В продакшене ОБЯЗАТЕЛЬНО замените его в .env');
-    console.warn('⚠️  Сгенерировать: openssl rand -hex 32');
     console.warn('');
 }
 
@@ -66,14 +55,12 @@ if (process.env.PASSWORD_PEPPER === DEFAULT_PEPPER) {
     console.warn('');
     console.warn('⚠️  ВНИМАНИЕ: Используется стандартный PASSWORD_PEPPER!');
     console.warn('⚠️  В продакшене ОБЯЗАТЕЛЬНО замените его в .env');
-    console.warn('⚠️  Сгенерировать: openssl rand -hex 32');
     console.warn('');
 }
 
 // =====================================================
 // 📦 ЭКСПОРТ КОНФИГУРАЦИИ
 // =====================================================
-
 module.exports = {
     // -----------------------------------------------------
     // 🌐 СЕРВЕР
@@ -82,7 +69,6 @@ module.exports = {
     HOST: process.env.HOST || '0.0.0.0',
     NODE_ENV: process.env.NODE_ENV || 'development',
 
-    // Флаги окружения (удобно для проверок)
     IS_PRODUCTION: process.env.NODE_ENV === 'production',
     IS_DEVELOPMENT: process.env.NODE_ENV !== 'production',
 
@@ -92,58 +78,49 @@ module.exports = {
     JWT_SECRET: process.env.JWT_SECRET,
     JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '7d',
     BCRYPT_ROUNDS: parseInt(process.env.BCRYPT_ROUNDS, 10) || 10,
-
-    // Pepper (перец) — дополнительный секрет для паролей
-    // Используется в utils/password.js
     PASSWORD_PEPPER: process.env.PASSWORD_PEPPER,
 
-    // Блокировка аккаунта после неудачных попыток
     MAX_LOGIN_ATTEMPTS: parseInt(process.env.MAX_LOGIN_ATTEMPTS, 10) || 5,
     LOCKOUT_DURATION_MINUTES: parseInt(process.env.LOCKOUT_DURATION_MINUTES, 10) || 30,
 
-    // Rate Limiting (ограничение частоты запросов)
     LOGIN_RATE_LIMIT: parseInt(process.env.LOGIN_RATE_LIMIT, 10) || 5,
     LOGIN_RATE_WINDOW_MINUTES: parseInt(process.env.LOGIN_RATE_WINDOW_MINUTES, 10) || 15,
 
     // -----------------------------------------------------
-    // 💾 БАЗА ДАННЫХ
+    // 💾 БАЗА ДАННЫХ (PostgreSQL)
     // -----------------------------------------------------
-    DB_TYPE: process.env.DB_TYPE || 'sqlite',
-    DB_PATH: process.env.DB_PATH || './database/chat.db',
+    DATABASE_URL: process.env.DATABASE_URL,
 
-    // Ключ шифрования БД (SQLCipher) — добавим позже
-    // Если null — БД не шифруется
-    DB_ENCRYPTION_KEY: process.env.DB_ENCRYPTION_KEY || null,
+    // Настройки пула
+    DB_POOL_MAX: parseInt(process.env.DB_POOL_MAX, 10) || 10,
+    DB_POOL_IDLE_TIMEOUT: parseInt(process.env.DB_POOL_IDLE_TIMEOUT, 10) || 30000,
+    DB_POOL_CONNECTION_TIMEOUT: parseInt(process.env.DB_POOL_CONNECTION_TIMEOUT, 10) || 5000,
+
+    // SSL для PostgreSQL (ONREZA требует require)
+    DB_SSL: process.env.DB_SSL !== 'false',
 
     // -----------------------------------------------------
     // 📸 ФАЙЛЫ
     // -----------------------------------------------------
     UPLOAD_DIR: process.env.UPLOAD_DIR || './uploads',
-    MAX_FILE_SIZE: parseInt(process.env.MAX_FILE_SIZE, 10) || 10 * 1024 * 1024, // 10 МБ
+    MAX_FILE_SIZE: parseInt(process.env.MAX_FILE_SIZE, 10) || 10 * 1024 * 1024,
 
     // -----------------------------------------------------
     // 🌍 CORS
     // -----------------------------------------------------
-    // Локально: '*'
-    // Продакшен: 'https://your-domain.ru'
     CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
 
     // -----------------------------------------------------
-    // 📋 ПО УМОЛЧАНИЮ (для первого запуска)
+    // 📋 ПО УМОЛЧАНИЮ
     // -----------------------------------------------------
-    // При первой инициализации БД создаётся командир.
-    // ⚠️ Пароль сменить после первого входа!
     DEFAULT_COMMANDER: {
-        username: 'commander',
-        password: 'boba_marley_2024',
-        displayName: 'Командир Боб',
+        username: 'admin',
+        password: 'admin_secret_2024',
+        displayName: 'Администратор',
     },
 
-    // -----------------------------------------------------
-    // ⏱️ ЛИМИТЫ И ТАЙМАУТЫ
-    // -----------------------------------------------------
-    MAX_USERS: 100,                    // Максимум пользователей
-    MESSAGE_PAGE_SIZE: 50,             // Сколько сообщений за раз
-    TYPING_TIMEOUT: 3000,              // Через сколько мс сбрасывать "печатает"
-    ONLINE_TIMEOUT: 60000,             // Через сколько мс считать офлайн
+    MAX_USERS: 100,
+    MESSAGE_PAGE_SIZE: 50,
+    TYPING_TIMEOUT: 3000,
+    ONLINE_TIMEOUT: 60000,
 };

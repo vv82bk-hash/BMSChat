@@ -1,20 +1,7 @@
 // =====================================================
-// 📤 BMSChat — ЗАГРУЗКА ФАЙЛОВ
+// 📤 BMSChat — ЗАГРУЗКА ФАЙЛОВ (PostgreSQL)
 // =====================================================
 // POST /api/upload
-//
-// Принимает файл через multipart/form-data:
-//   • file — файл
-//   • type — 'image' | 'voice' | 'file'
-//
-// Сохраняет в server/uploads/
-// Возвращает: { file_path, file_name, file_size, mime_type, file_type }
-//
-// ЛИМИТЫ: 10 МБ
-//
-// ФИЛЬТР:
-//   • Разрешены image/*, audio/*, application/pdf
-//   • Если MIME = application/octet-stream — проверяем расширение
 // =====================================================
 
 const express = require('express');
@@ -25,6 +12,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 
 const { authMiddleware } = require('../middleware/auth');
+const { pool } = require('../database/init');
 const logger = require('../utils/logger');
 
 // =====================================================
@@ -53,45 +41,27 @@ const storage = multer.diskStorage({
 });
 
 // =====================================================
-// 🛡️ РАЗРЕШЁННЫЕ MIME-ТИПЫ
+// 🛡️ ФИЛЬТР ФАЙЛОВ
 // =====================================================
 const ALLOWED_MIME_TYPES = [
-    'image/jpeg',
-    'image/png',
-    'image/gif',
-    'image/webp',
-    'audio/mpeg',
-    'audio/mp4',
-    'audio/wav',
-    'audio/webm',
-    'audio/ogg',
-    'audio/aac',
-    'audio/x-m4a',
+    'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+    'audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/webm',
+    'audio/ogg', 'audio/aac', 'audio/x-m4a',
     'application/pdf',
-    'application/octet-stream',   // ← для файлов из кэша image_picker
+    'application/octet-stream',
 ];
 
-// =====================================================
-// 🛡️ РАЗРЕШЁННЫЕ РАСШИРЕНИЯ
-// =====================================================
-// Используются, если MIME = application/octet-stream
-// =====================================================
 const ALLOWED_EXTENSIONS = [
     '.jpg', '.jpeg', '.png', '.gif', '.webp',
     '.mp3', '.m4a', '.wav', '.webm', '.ogg', '.aac',
     '.pdf',
 ];
 
-// =====================================================
-// 🛡️ ФИЛЬТР ФАЙЛОВ
-// =====================================================
 const fileFilter = (_req, file, cb) => {
-    // 1. Если MIME явно разрешён — пропускаем
     if (ALLOWED_MIME_TYPES.includes(file.mimetype)) {
         return cb(null, true);
     }
 
-    // 2. Если MIME = octet-stream — проверяем по расширению
     if (file.mimetype === 'application/octet-stream') {
         const ext = path.extname(file.originalname).toLowerCase();
         if (ALLOWED_EXTENSIONS.includes(ext)) {
@@ -99,7 +69,6 @@ const fileFilter = (_req, file, cb) => {
         }
     }
 
-    // 3. Иначе — отказ
     cb(new Error(`Недопустимый тип файла: ${file.mimetype}`));
 };
 
@@ -109,16 +78,14 @@ const fileFilter = (_req, file, cb) => {
 const upload = multer({
     storage,
     fileFilter,
-    limits: {
-        fileSize: 10 * 1024 * 1024, // 10 МБ
-    },
+    limits: { fileSize: 10 * 1024 * 1024 },
 });
 
 // =====================================================
 // 📤 POST /api/upload
 // =====================================================
 router.post('/', authMiddleware, (req, res) => {
-    upload.single('file')(req, res, (err) => {
+    upload.single('file')(req, res, async (err) => {
         if (err) {
             if (err instanceof multer.MulterError) {
                 if (err.code === 'LIMIT_FILE_SIZE') {
@@ -136,40 +103,44 @@ router.post('/', authMiddleware, (req, res) => {
             return res.status(400).json({ error: 'Файл не получен' });
         }
 
-        // Определяем тип файла
-        let fileType = req.body.type || 'file';
-        if (req.file.mimetype.startsWith('image/')) {
-            fileType = 'image';
-        } else if (req.file.mimetype.startsWith('audio/')) {
-            fileType = 'voice';
-        } else if (req.file.mimetype === 'application/octet-stream') {
-            // По расширению
-            const ext = path.extname(req.file.originalname).toLowerCase();
-            if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
+        try {
+            // Определяем тип
+            let fileType = req.body.type || 'file';
+            if (req.file.mimetype.startsWith('image/')) {
                 fileType = 'image';
-            } else if (['.mp3', '.m4a', '.wav', '.webm', '.ogg', '.aac'].includes(ext)) {
+            } else if (req.file.mimetype.startsWith('audio/')) {
                 fileType = 'voice';
-            } else {
-                fileType = 'file';
+            } else if (req.file.mimetype === 'application/octet-stream') {
+                const ext = path.extname(req.file.originalname).toLowerCase();
+                if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
+                    fileType = 'image';
+                } else if (['.mp3', '.m4a', '.wav', '.webm', '.ogg', '.aac'].includes(ext)) {
+                    fileType = 'voice';
+                } else {
+                    fileType = 'file';
+                }
             }
+
+            const result = {
+                file_path: `/uploads/${req.file.filename}`,
+                file_name: req.file.originalname,
+                file_size: req.file.size,
+                mime_type: req.file.mimetype,
+                file_type: fileType,
+            };
+
+            logger.success('Файл загружен', {
+                userId: req.user.id,
+                name: result.file_name,
+                size: result.file_size,
+                type: result.file_type,
+            });
+
+            res.status(201).json(result);
+        } catch (error) {
+            logger.error('Ошибка обработки загрузки', error);
+            res.status(500).json({ error: 'Ошибка сервера' });
         }
-
-        const result = {
-            file_path: `/uploads/${req.file.filename}`,
-            file_name: req.file.originalname,
-            file_size: req.file.size,
-            mime_type: req.file.mimetype,
-            file_type: fileType,
-        };
-
-        logger.success('Файл загружен', {
-            userId: req.user.id,
-            name: result.file_name,
-            size: result.file_size,
-            type: result.file_type,
-        });
-
-        res.status(201).json(result);
     });
 });
 

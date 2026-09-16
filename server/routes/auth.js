@@ -1,23 +1,5 @@
 // =====================================================
-// 🔐 BMSChat — РОУТЫ АВТОРИЗАЦИИ
-// =====================================================
-// Регистрация, вход, выход.
-//
-// ЛОГИКА РЕГИСТРАЦИИ:
-//   1. Пользователь регистрируется → is_approved = 0
-//   2. НЕ выдаём никаких ролей
-//   3. Ждёт подтверждения командира
-//
-// ПОСЛЕ ПОДТВЕРЖДЕНИЯ (см. routes/users.js):
-//   → Командир вызывает /approve
-//   → Выдаётся роль "Боец"
-//   → is_approved = 1
-//
-// БЕЗОПАСНОСТЬ:
-//   • Rate Limiting — не более 5 попыток входа / 15 мин
-//   • Account Lockout — блокировка после 5 неудач на 30 мин
-//   • Pepper — дополнительный секрет для паролей
-//   • JWT — токен на 7 дней
+// 🔐 BMSChat — РОУТЫ АВТОРИЗАЦИИ (PostgreSQL)
 // =====================================================
 
 const express = require('express');
@@ -25,7 +7,7 @@ const rateLimit = require('express-rate-limit');
 const router = express.Router();
 
 const config = require('../config');
-const { db } = require('../database/init');
+const { pool } = require('../database/init');
 const { hashPassword, verifyPassword, validatePasswordStrength } = require('../utils/password');
 const { generateToken } = require('../utils/jwt');
 const { authMiddleware } = require('../middleware/auth');
@@ -36,7 +18,6 @@ const logger = require('../utils/logger');
 // 🛡️ RATE LIMITING
 // =====================================================
 
-// /login — 5 попыток / 15 минут
 const loginLimiter = rateLimit({
     windowMs: config.LOGIN_RATE_WINDOW_MINUTES * 60 * 1000,
     max: config.LOGIN_RATE_LIMIT,
@@ -51,7 +32,6 @@ const loginLimiter = rateLimit({
     },
 });
 
-// /register — 3 регистрации / час с одного IP
 const registerLimiter = rateLimit({
     windowMs: 60 * 60 * 1000,
     max: 3,
@@ -67,33 +47,22 @@ const registerLimiter = rateLimit({
 });
 
 // =====================================================
-// 📝 POST /api/auth/register — Регистрация
-// =====================================================
-// ⚠️ НЕ выдаём роли! Пользователь ждёт подтверждения.
-// После подтверждения командиром выдаётся роль "Боец"
-// (см. routes/users.js → POST /:id/approve).
+// 📝 POST /api/auth/register
 // =====================================================
 router.post('/register', registerLimiter, async (req, res) => {
     try {
         const { username, password, display_name } = req.body;
 
-        // Валидация
         if (!username || !password) {
-            return res.status(400).json({
-                error: 'Логин и пароль обязательны',
-            });
+            return res.status(400).json({ error: 'Логин и пароль обязательны' });
         }
 
         if (username.length < 3 || username.length > 30) {
-            return res.status(400).json({
-                error: 'Логин должен быть от 3 до 30 символов',
-            });
+            return res.status(400).json({ error: 'Логин должен быть от 3 до 30 символов' });
         }
 
         if (!/^[a-zA-Z0-9_]+$/.test(username)) {
-            return res.status(400).json({
-                error: 'Логин может содержать только латиницу, цифры и _',
-            });
+            return res.status(400).json({ error: 'Логин может содержать только латиницу, цифры и _' });
         }
 
         const pwdCheck = validatePasswordStrength(password);
@@ -101,37 +70,31 @@ router.post('/register', registerLimiter, async (req, res) => {
             return res.status(400).json({ error: pwdCheck.message });
         }
 
-        // Проверка логина
-        const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
-        if (existing) {
-            return res.status(409).json({
-                error: 'Пользователь с таким логином уже существует',
-            });
+        // Проверка, что логин свободен
+        const existing = await pool.query('SELECT id FROM users WHERE username = $1', [username]);
+        if (existing.rows.length > 0) {
+            return res.status(409).json({ error: 'Пользователь с таким логином уже существует' });
         }
 
         // Лимит пользователей
-        const count = db.prepare('SELECT COUNT(*) as cnt FROM users').get();
-        if (count.cnt >= config.MAX_USERS) {
+        const count = await pool.query('SELECT COUNT(*) as cnt FROM users');
+        if (parseInt(count.rows[0].cnt, 10) >= config.MAX_USERS) {
             return res.status(403).json({
                 error: `Достигнут лимит пользователей (${config.MAX_USERS})`,
             });
         }
 
-        // Хешируем пароль
         const passwordHash = await hashPassword(password);
 
-        // Создаём пользователя БЕЗ ролей (is_approved=0)
-        const result = db.prepare(`
+        const result = await pool.query(`
             INSERT INTO users (username, password, display_name, is_approved)
-            VALUES (?, ?, ?, 0)
-        `).run(username, passwordHash, display_name || username);
+            VALUES ($1, $2, $3, FALSE)
+            RETURNING id
+        `, [username, passwordHash, display_name || username]);
 
-        const userId = result.lastInsertRowid;
+        const userId = result.rows[0].id;
 
-        logger.success('Новый пользователь зарегистрирован', {
-            userId,
-            username,
-        });
+        logger.success('Новый пользователь зарегистрирован', { userId, username });
 
         res.status(201).json({
             message: 'Регистрация успешна! Ожидайте подтверждения командира.',
@@ -139,10 +102,9 @@ router.post('/register', registerLimiter, async (req, res) => {
                 id: userId,
                 username,
                 display_name: display_name || username,
-                is_approved: 0,
+                is_approved: false,
             },
         });
-
     } catch (error) {
         logger.error('Ошибка регистрации', error);
         res.status(500).json({ error: 'Ошибка сервера' });
@@ -150,35 +112,30 @@ router.post('/register', registerLimiter, async (req, res) => {
 });
 
 // =====================================================
-// 🔑 POST /api/auth/login — Вход
+// 🔑 POST /api/auth/login
 // =====================================================
 router.post('/login', loginLimiter, async (req, res) => {
     try {
         const { username, password } = req.body;
 
         if (!username || !password) {
-            return res.status(400).json({
-                error: 'Логин и пароль обязательны',
-            });
+            return res.status(400).json({ error: 'Логин и пароль обязательны' });
         }
 
-        // Ищем пользователя
-        const user = db.prepare(`
+        const result = await pool.query(`
             SELECT id, username, password, display_name, avatar,
                    is_approved, failed_login_attempts, lockout_until
-            FROM users WHERE username = ?
-        `).get(username);
+            FROM users WHERE username = $1
+        `, [username]);
 
-        if (!user) {
+        if (result.rows.length === 0) {
             logger.logLoginAttempt(username, false);
-            return res.status(401).json({
-                error: 'Неверный логин или пароль',
-            });
+            return res.status(401).json({ error: 'Неверный логин или пароль' });
         }
 
-        // ============================================
-        // 🔒 ПРОВЕРКА БЛОКИРОВКИ
-        // ============================================
+        const user = result.rows[0];
+
+        // Проверка блокировки
         if (user.lockout_until) {
             const lockoutTime = new Date(user.lockout_until);
             const now = new Date();
@@ -186,7 +143,8 @@ router.post('/login', loginLimiter, async (req, res) => {
             if (lockoutTime > now) {
                 const minutesLeft = Math.ceil((lockoutTime - now) / 60000);
                 logger.warn('Попытка входа в заблокированный аккаунт', {
-                    userId: user.id, minutesLeft,
+                    userId: user.id,
+                    minutesLeft,
                 });
                 return res.status(429).json({
                     error: 'Аккаунт временно заблокирован',
@@ -194,19 +152,17 @@ router.post('/login', loginLimiter, async (req, res) => {
                     lockoutUntil: user.lockout_until,
                 });
             } else {
-                db.prepare(`
+                await pool.query(`
                     UPDATE users 
                     SET failed_login_attempts = 0, lockout_until = NULL 
-                    WHERE id = ?
-                `).run(user.id);
+                    WHERE id = $1
+                `, [user.id]);
                 user.failed_login_attempts = 0;
                 user.lockout_until = null;
             }
         }
 
-        // ============================================
-        // ✓ ПРОВЕРКА ПАРОЛЯ
-        // ============================================
+        // Проверка пароля
         const valid = await verifyPassword(password, user.password);
 
         if (!valid) {
@@ -215,15 +171,15 @@ router.post('/login', loginLimiter, async (req, res) => {
             if (attempts >= config.MAX_LOGIN_ATTEMPTS) {
                 const lockoutUntil = new Date(
                     Date.now() + config.LOCKOUT_DURATION_MINUTES * 60 * 1000
-                ).toISOString();
+                );
 
-                db.prepare(`
+                await pool.query(`
                     UPDATE users 
-                    SET failed_login_attempts = ?, lockout_until = ? 
-                    WHERE id = ?
-                `).run(attempts, lockoutUntil, user.id);
+                    SET failed_login_attempts = $1, lockout_until = $2
+                    WHERE id = $3
+                `, [attempts, lockoutUntil, user.id]);
 
-                logger.logAccountLockout(user.id, lockoutUntil);
+                logger.logAccountLockout(user.id, lockoutUntil.toISOString());
 
                 return res.status(429).json({
                     error: 'Аккаунт заблокирован',
@@ -231,9 +187,9 @@ router.post('/login', loginLimiter, async (req, res) => {
                     lockoutUntil,
                 });
             } else {
-                db.prepare(`
-                    UPDATE users SET failed_login_attempts = ? WHERE id = ?
-                `).run(attempts, user.id);
+                await pool.query(`
+                    UPDATE users SET failed_login_attempts = $1 WHERE id = $2
+                `, [attempts, user.id]);
 
                 logger.logLoginAttempt(username, false);
 
@@ -244,9 +200,7 @@ router.post('/login', loginLimiter, async (req, res) => {
             }
         }
 
-        // ============================================
-        // ✓ ПРОВЕРКА ПОДТВЕРЖДЕНИЯ
-        // ============================================
+        // Проверка подтверждения
         if (!user.is_approved) {
             logger.logLoginAttempt(username, false);
             return res.status(403).json({
@@ -255,25 +209,19 @@ router.post('/login', loginLimiter, async (req, res) => {
             });
         }
 
-        // ============================================
-        // ✅ УСПЕШНЫЙ ВХОД
-        // ============================================
-
-        db.prepare(`
+        // Успешный вход
+        await pool.query(`
             UPDATE users
             SET status = 'online',
-                last_seen = CURRENT_TIMESTAMP,
+                last_seen = NOW(),
                 failed_login_attempts = 0,
                 lockout_until = NULL
-            WHERE id = ?
-        `).run(user.id);
+            WHERE id = $1
+        `, [user.id]);
 
-        // Генерируем токен
         const token = generateToken(user);
-
-        // Загружаем роли и права (НОВАЯ СХЕМА)
-        const roles = getUserRoles(user.id);
-        const permissions = getMergedPermissions(user.id);
+        const roles = await getUserRoles(user.id);
+        const permissions = await getMergedPermissions(user.id);
 
         logger.logLoginAttempt(username, true);
 
@@ -286,7 +234,7 @@ router.post('/login', loginLimiter, async (req, res) => {
                 display_name: user.display_name,
                 avatar: user.avatar,
                 is_approved: user.is_approved,
-                roles: roles.map(r => ({
+                roles: roles.map((r) => ({
                     id: r.id,
                     name: r.name,
                     color: r.color,
@@ -296,7 +244,6 @@ router.post('/login', loginLimiter, async (req, res) => {
                 permissions,
             },
         });
-
     } catch (error) {
         logger.error('Ошибка входа', error);
         res.status(500).json({ error: 'Ошибка сервера' });
@@ -304,17 +251,17 @@ router.post('/login', loginLimiter, async (req, res) => {
 });
 
 // =====================================================
-// 👤 GET /api/auth/me — Текущий пользователь
+// 👤 GET /api/auth/me
 // =====================================================
-router.get('/me', authMiddleware, (req, res) => {
+router.get('/me', authMiddleware, async (req, res) => {
     try {
-        const roles = getUserRoles(req.user.id);
-        const permissions = getMergedPermissions(req.user.id);
+        const roles = await getUserRoles(req.user.id);
+        const permissions = await getMergedPermissions(req.user.id);
 
         res.json({
             user: {
                 ...req.user,
-                roles: roles.map(r => ({
+                roles: roles.map((r) => ({
                     id: r.id,
                     name: r.name,
                     color: r.color,
@@ -331,15 +278,15 @@ router.get('/me', authMiddleware, (req, res) => {
 });
 
 // =====================================================
-// 🚪 POST /api/auth/logout — Выход
+// 🚪 POST /api/auth/logout
 // =====================================================
-router.post('/logout', authMiddleware, (req, res) => {
+router.post('/logout', authMiddleware, async (req, res) => {
     try {
-        db.prepare(`
+        await pool.query(`
             UPDATE users
-            SET status = 'offline', last_seen = CURRENT_TIMESTAMP
-            WHERE id = ?
-        `).run(req.user.id);
+            SET status = 'offline', last_seen = NOW()
+            WHERE id = $1
+        `, [req.user.id]);
 
         logger.info('Выход пользователя', { userId: req.user.id });
 

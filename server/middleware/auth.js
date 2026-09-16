@@ -1,28 +1,24 @@
 // =====================================================
-// 🛡️ BMSChat — MIDDLEWARE АВТОРИЗАЦИИ
+// 🛡️ BMSChat — MIDDLEWARE АВТОРИЗАЦИИ (PostgreSQL)
 // =====================================================
-// Проверяет, что пользователь авторизован.
+// Проверяет JWT-токен и загружает пользователя из БД.
 //
-// Как это работает:
-//   1. Клиент отправляет заголовок: Authorization: Bearer <token>
-//   2. Middleware извлекает токен
-//   3. Проверяет токен через jwt.verifyToken()
-//   4. Загружает пользователя из БД
-//   5. Кладёт его в req.user
-//   6. Передаёт управление дальше (next())
-//
-// Если токен невалиден — возвращает 401 Unauthorized.
+// Использование:
+//   router.get('/profile', authMiddleware, (req, res) => {
+//       // req.user доступен
+//   });
 // =====================================================
 
 const { verifyToken, extractToken } = require('../utils/jwt');
-const { db } = require('../database/init');
+const { pool } = require('../database/init');
+const logger = require('../utils/logger');
 
-/**
- * Основной middleware: требует авторизации
- */
+// =====================================================
+// 🛡️ ОСНОВНОЙ MIDDLEWARE
+// =====================================================
 async function authMiddleware(req, res, next) {
     try {
-        // 1. Извлекаем токен из заголовка
+        // 1. Извлекаем токен
         const token = extractToken(req.headers.authorization);
 
         if (!token) {
@@ -43,17 +39,19 @@ async function authMiddleware(req, res, next) {
         }
 
         // 3. Загружаем пользователя из БД
-        const user = db.prepare(`
+        const result = await pool.query(`
             SELECT id, username, display_name, avatar, status, is_approved
             FROM users
-            WHERE id = ?
-        `).get(payload.userId);
+            WHERE id = $1
+        `, [payload.userId]);
 
-        if (!user) {
+        if (result.rows.length === 0) {
             return res.status(401).json({
                 error: 'Пользователь не найден',
             });
         }
+
+        const user = result.rows[0];
 
         // 4. Проверяем, подтверждён ли пользователь
         if (!user.is_approved) {
@@ -68,17 +66,18 @@ async function authMiddleware(req, res, next) {
 
         // 6. Идём дальше
         next();
-
     } catch (error) {
-        console.error('❌ Ошибка auth middleware:', error);
+        logger.error('Ошибка auth middleware', error);
         return res.status(500).json({ error: 'Ошибка сервера' });
     }
 }
 
-/**
- * Опциональный middleware: загружает пользователя, если токен есть,
- * но не блокирует запрос, если его нет.
- */
+// =====================================================
+// 🛡️ ОПЦИОНАЛЬНЫЙ MIDDLEWARE
+// =====================================================
+// Загружает пользователя, если токен есть.
+// Не блокирует, если токена нет.
+// =====================================================
 async function optionalAuthMiddleware(req, res, next) {
     try {
         const token = extractToken(req.headers.authorization);
@@ -93,20 +92,22 @@ async function optionalAuthMiddleware(req, res, next) {
             return next();
         }
 
-        const user = db.prepare(`
+        const result = await pool.query(`
             SELECT id, username, display_name, avatar, status, is_approved
-            FROM users WHERE id = ?
-        `).get(payload.userId);
+            FROM users WHERE id = $1
+        `, [payload.userId]);
 
-        req.user = user || null;
+        req.user = result.rows.length > 0 ? result.rows[0] : null;
         next();
-
     } catch (error) {
         req.user = null;
         next();
     }
 }
 
+// =====================================================
+// 📤 ЭКСПОРТ
+// =====================================================
 module.exports = {
     authMiddleware,
     optionalAuthMiddleware,

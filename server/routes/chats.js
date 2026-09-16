@@ -1,49 +1,50 @@
 // =====================================================
-// 💬 BMSChat — РОУТЫ ЧАТОВ
-// =====================================================
-// 4 типа чатов: private, general, group, channel
+// 💬 BMSChat — РОУТЫ ЧАТОВ (PostgreSQL)
 // =====================================================
 
 const express = require('express');
 const router = express.Router();
 
-const { db } = require('../database/init');
+const { pool } = require('../database/init');
 const { authMiddleware } = require('../middleware/auth');
 const { checkChatAccess, isChatAdmin, getChatMembers } = require('../utils/chatAccess');
 const logger = require('../utils/logger');
 
-// -----------------------------------------------------
-// 📋 GET /api/chats — Мои чаты
-// -----------------------------------------------------
-router.get('/', authMiddleware, (req, res) => {
+// =====================================================
+// 📋 GET /api/chats
+// =====================================================
+router.get('/', authMiddleware, async (req, res) => {
     try {
-        const chats = db.prepare(`
+        const result = await pool.query(`
             SELECT 
                 c.id, c.type, c.name, c.description, c.avatar,
                 c.created_at, c.updated_at,
                 cm.role as my_role,
-                (SELECT COUNT(*) FROM chat_members WHERE chat_id = c.id) as members_count,
+                (SELECT COUNT(*)::int FROM chat_members WHERE chat_id = c.id) as members_count,
                 (SELECT id FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message_id,
                 (SELECT text FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message_text,
                 (SELECT created_at FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message_at
             FROM chats c
             INNER JOIN chat_members cm ON cm.chat_id = c.id
-            WHERE cm.user_id = ? AND c.is_active = 1
+            WHERE cm.user_id = $1 AND c.is_active = TRUE
             ORDER BY 
-                COALESCE(last_message_at, c.created_at) DESC
-        `).all(req.user.id);
+                COALESCE(
+                    (SELECT created_at FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1),
+                    c.created_at
+                ) DESC
+        `, [req.user.id]);
 
-        res.json({ chats });
+        res.json({ chats: result.rows });
     } catch (error) {
         logger.error('Ошибка /chats', error);
         res.status(500).json({ error: 'Ошибка сервера' });
     }
 });
 
-// -----------------------------------------------------
-// ➕ POST /api/chats — Создать чат
-// -----------------------------------------------------
-router.post('/', authMiddleware, (req, res) => {
+// =====================================================
+// ➕ POST /api/chats
+// =====================================================
+router.post('/', authMiddleware, async (req, res) => {
     try {
         const { type, name, description, members } = req.body;
 
@@ -55,47 +56,48 @@ router.post('/', authMiddleware, (req, res) => {
             return res.status(400).json({ error: 'Название чата минимум 2 символа' });
         }
 
-        // Для каналов — проверка права
         if (type === 'channel') {
-            const canCreate = db.prepare(`
+            const canCreate = await pool.query(`
                 SELECT 1 FROM user_roles ur
                 INNER JOIN roles r ON r.id = ur.role_id
-                WHERE ur.user_id = ? AND r.can_create_feed = 1
+                WHERE ur.user_id = $1 AND r.can_create_feed = TRUE
                 LIMIT 1
-            `).get(req.user.id);
-            if (!canCreate) {
+            `, [req.user.id]);
+
+            if (canCreate.rows.length === 0) {
                 return res.status(403).json({ error: 'Недостаточно прав для создания канала' });
             }
         }
 
-        const chatResult = db.prepare(`
+        const chatResult = await pool.query(`
             INSERT INTO chats (type, name, description, created_by)
-            VALUES (?, ?, ?, ?)
-        `).run(type, name.trim(), description || null, req.user.id);
+            VALUES ($1, $2, $3, $4)
+            RETURNING id
+        `, [type, name.trim(), description || null, req.user.id]);
 
-        const chatId = chatResult.lastInsertRowid;
+        const chatId = chatResult.rows[0].id;
 
-        db.prepare(`
+        await pool.query(`
             INSERT INTO chat_members (chat_id, user_id, role)
-            VALUES (?, ?, 'admin')
-        `).run(chatId, req.user.id);
+            VALUES ($1, $2, 'admin')
+        `, [chatId, req.user.id]);
 
-        // Добавляем остальных
         if (Array.isArray(members)) {
             for (const memberId of members) {
                 if (memberId === req.user.id) continue;
                 try {
-                    db.prepare(`
-                        INSERT OR IGNORE INTO chat_members (chat_id, user_id, role)
-                        VALUES (?, ?, 'member')
-                    `).run(chatId, memberId);
-                } catch (e) {}
+                    await pool.query(`
+                        INSERT INTO chat_members (chat_id, user_id, role)
+                        VALUES ($1, $2, 'member')
+                        ON CONFLICT DO NOTHING
+                    `, [chatId, memberId]);
+                } catch (e) {
+                    // Пропускаем
+                }
             }
         }
 
-        logger.success('Чат создан', {
-            chatId, type, by: req.user.id,
-        });
+        logger.success('Чат создан', { chatId, type, by: req.user.id });
 
         res.status(201).json({
             message: 'Чат создан',
@@ -107,10 +109,10 @@ router.post('/', authMiddleware, (req, res) => {
     }
 });
 
-// -----------------------------------------------------
-// 💬 POST /api/chats/private/:userId — Личный чат
-// -----------------------------------------------------
-router.post('/private/:userId', authMiddleware, (req, res) => {
+// =====================================================
+// 💬 POST /api/chats/private/:userId
+// =====================================================
+router.post('/private/:userId', authMiddleware, async (req, res) => {
     try {
         const otherUserId = parseInt(req.params.userId, 10);
 
@@ -118,30 +120,33 @@ router.post('/private/:userId', authMiddleware, (req, res) => {
             return res.status(400).json({ error: 'Нельзя открыть чат с самим собой' });
         }
 
-        // Ищем существующий личный чат
-        const existing = db.prepare(`
+        const existing = await pool.query(`
             SELECT c.id FROM chats c
-            INNER JOIN chat_members cm1 ON cm1.chat_id = c.id AND cm1.user_id = ?
-            INNER JOIN chat_members cm2 ON cm2.chat_id = c.id AND cm2.user_id = ?
+            INNER JOIN chat_members cm1 ON cm1.chat_id = c.id AND cm1.user_id = $1
+            INNER JOIN chat_members cm2 ON cm2.chat_id = c.id AND cm2.user_id = $2
             WHERE c.type = 'private'
             LIMIT 1
-        `).get(req.user.id, otherUserId);
+        `, [req.user.id, otherUserId]);
 
-        if (existing) {
-            return res.json({ chat_id: existing.id, existed: true });
+        if (existing.rows.length > 0) {
+            return res.json({ chat_id: existing.rows[0].id, existed: true });
         }
 
-        // Создаём новый
-        const result = db.prepare(`
-            INSERT INTO chats (type, created_by) VALUES ('private', ?)
-        `).run(req.user.id);
+        const result = await pool.query(`
+            INSERT INTO chats (type, created_by) VALUES ('private', $1)
+            RETURNING id
+        `, [req.user.id]);
 
-        const chatId = result.lastInsertRowid;
+        const chatId = result.rows[0].id;
 
-        db.prepare(`INSERT INTO chat_members (chat_id, user_id, role) VALUES (?, ?, 'member')`)
-            .run(chatId, req.user.id);
-        db.prepare(`INSERT INTO chat_members (chat_id, user_id, role) VALUES (?, ?, 'member')`)
-            .run(chatId, otherUserId);
+        await pool.query(
+            `INSERT INTO chat_members (chat_id, user_id, role) VALUES ($1, $2, 'member')`,
+            [chatId, req.user.id]
+        );
+        await pool.query(
+            `INSERT INTO chat_members (chat_id, user_id, role) VALUES ($1, $2, 'member')`,
+            [chatId, otherUserId]
+        );
 
         logger.info('Личный чат создан', {
             chatId,
@@ -156,27 +161,27 @@ router.post('/private/:userId', authMiddleware, (req, res) => {
     }
 });
 
-// -----------------------------------------------------
-// 👥 GET /api/chats/:id — Информация о чате
-// -----------------------------------------------------
-router.get('/:id', authMiddleware, (req, res) => {
+// =====================================================
+// 👥 GET /api/chats/:id
+// =====================================================
+router.get('/:id', authMiddleware, async (req, res) => {
     try {
         const chatId = parseInt(req.params.id, 10);
 
-        // Проверка доступа через централизованную функцию
-        const access = checkChatAccess(chatId, req.user.id);
+        const access = await checkChatAccess(chatId, req.user.id);
         if (!access.allowed) {
             return res.status(403).json({ error: access.reason });
         }
 
-        const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(chatId);
-        if (!chat) return res.status(404).json({ error: 'Чат не найден' });
+        const chatResult = await pool.query('SELECT * FROM chats WHERE id = $1', [chatId]);
+        if (chatResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Чат не найден' });
+        }
 
-        // Участники
-        const members = getChatMembers(chatId);
+        const members = await getChatMembers(chatId);
 
         res.json({
-            chat: { ...chat, my_role: access.role },
+            chat: { ...chatResult.rows[0], my_role: access.role },
             members,
         });
     } catch (error) {
@@ -185,26 +190,26 @@ router.get('/:id', authMiddleware, (req, res) => {
     }
 });
 
-// -----------------------------------------------------
-// ➕ POST /api/chats/:id/members — Добавить участника
-// -----------------------------------------------------
-router.post('/:id/members', authMiddleware, (req, res) => {
+// =====================================================
+// ➕ POST /api/chats/:id/members
+// =====================================================
+router.post('/:id/members', authMiddleware, async (req, res) => {
     try {
         const chatId = parseInt(req.params.id, 10);
         const { userId } = req.body;
 
-        if (!isChatAdmin(chatId, req.user.id)) {
+        const isAdmin = await isChatAdmin(chatId, req.user.id);
+        if (!isAdmin) {
             return res.status(403).json({ error: 'Только админ чата может добавлять' });
         }
 
-        db.prepare(`
-            INSERT OR IGNORE INTO chat_members (chat_id, user_id, role)
-            VALUES (?, ?, 'member')
-        `).run(chatId, userId);
+        await pool.query(`
+            INSERT INTO chat_members (chat_id, user_id, role)
+            VALUES ($1, $2, 'member')
+            ON CONFLICT DO NOTHING
+        `, [chatId, userId]);
 
-        logger.info('Участник добавлен', {
-            chatId, userId, by: req.user.id,
-        });
+        logger.info('Участник добавлен', { chatId, userId, by: req.user.id });
 
         res.json({ message: 'Участник добавлен' });
     } catch (error) {
@@ -213,24 +218,25 @@ router.post('/:id/members', authMiddleware, (req, res) => {
     }
 });
 
-// -----------------------------------------------------
-// 🗑️ DELETE /api/chats/:id/members/:userId — Убрать
-// -----------------------------------------------------
-router.delete('/:id/members/:userId', authMiddleware, (req, res) => {
+// =====================================================
+// 🗑️ DELETE /api/chats/:id/members/:userId
+// =====================================================
+router.delete('/:id/members/:userId', authMiddleware, async (req, res) => {
     try {
         const chatId = parseInt(req.params.id, 10);
         const userId = parseInt(req.params.userId, 10);
 
-        if (!isChatAdmin(chatId, req.user.id)) {
+        const isAdmin = await isChatAdmin(chatId, req.user.id);
+        if (!isAdmin) {
             return res.status(403).json({ error: 'Только админ может убирать' });
         }
 
-        db.prepare('DELETE FROM chat_members WHERE chat_id = ? AND user_id = ?')
-            .run(chatId, userId);
+        await pool.query(
+            'DELETE FROM chat_members WHERE chat_id = $1 AND user_id = $2',
+            [chatId, userId]
+        );
 
-        logger.info('Участник убран', {
-            chatId, userId, by: req.user.id,
-        });
+        logger.info('Участник убран', { chatId, userId, by: req.user.id });
 
         res.json({ message: 'Участник убран' });
     } catch (error) {
