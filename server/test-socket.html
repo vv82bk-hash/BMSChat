@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>BMSChat — Тест Socket.IO</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a0a;
+            color: #fff;
+            padding: 20px;
+            max-width: 700px;
+            margin: 0 auto;
+            min-height: 100vh;
+        }
+
+        h1 {
+            color: #FED100;
+            margin-bottom: 16px;
+            font-size: 24px;
+        }
+
+        h3 {
+            color: #FED100;
+            margin-bottom: 8px;
+            font-size: 16px;
+        }
+
+        .box {
+            background: #1e1e1e;
+            padding: 16px;
+            margin-bottom: 12px;
+            border-radius: 12px;
+            border: 1px solid rgba(254, 209, 0, 0.1);
+        }
+
+        .input-row {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        input[type="text"],
+        input[type="password"] {
+            flex: 1;
+            padding: 10px 14px;
+            background: #0a0a0a;
+            border: 1px solid #333;
+            border-radius: 8px;
+            color: white;
+            font-size: 14px;
+            outline: none;
+        }
+
+        input:focus {
+            border-color: #FED100;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: #FED100;
+            border: none;
+            border-radius: 8px;
+            color: #0a0a0a;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 14px;
+            transition: transform 0.2s;
+        }
+
+        button:hover {
+            transform: scale(1.03);
+        }
+
+        button:active {
+            transform: scale(0.97);
+        }
+
+        .btn-secondary {
+            background: #2C2C2E;
+            color: #FED100;
+        }
+
+        .status {
+            font-size: 13px;
+            padding: 6px 12px;
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            display: inline-block;
+            margin-top: 8px;
+        }
+
+        .status.connected {
+            background: rgba(52, 199, 89, 0.2);
+            color: #34C759;
+        }
+
+        .status.error {
+            background: rgba(227, 30, 36, 0.2);
+            color: #E31E24;
+        }
+
+        .message-list {
+            max-height: 300px;
+            overflow-y: auto;
+            padding: 8px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            margin-top: 8px;
+        }
+
+        .message-list::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .message-list::-webkit-scrollbar-thumb {
+            background: #FED100;
+            border-radius: 4px;
+        }
+
+        .msg {
+            padding: 8px 12px;
+            border-radius: 8px;
+            margin-bottom: 6px;
+            font-size: 14px;
+            background: #2C2C2E;
+            word-wrap: break-word;
+        }
+
+        .msg.own {
+            background: rgba(254, 209, 0, 0.15);
+            border-left: 3px solid #FED100;
+        }
+
+        .msg.system {
+            background: rgba(78, 205, 196, 0.1);
+            border-left: 3px solid #4ECDC4;
+            font-style: italic;
+            font-size: 12px;
+            color: #4ECDC4;
+        }
+
+        .msg .sender {
+            font-size: 12px;
+            color: #FED100;
+            font-weight: 600;
+            margin-bottom: 2px;
+        }
+
+        .msg .time {
+            font-size: 10px;
+            color: #666;
+            margin-top: 4px;
+        }
+
+        .typing-indicator {
+            min-height: 20px;
+            padding: 8px 12px;
+            color: #4ECDC4;
+            font-style: italic;
+            font-size: 13px;
+            transition: opacity 0.3s;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 6px 12px;
+            font-size: 13px;
+        }
+
+        .info-grid .label {
+            color: #888;
+        }
+
+        .info-grid .value {
+            color: #FED100;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>🎯 BMSChat — Тест Socket.IO</h1>
+    <p style="color: #888; font-size: 13px; margin-bottom: 16px;">
+        Открой эту страницу <b>в двух окнах браузера</b> (обычное + инкогнито),
+        войди как <b>test1</b> и <b>test2</b>, начни печатать.
+    </p>
+
+    <!-- ЛОГИН -->
+    <div class="box">
+        <h3>🔐 Авторизация</h3>
+        <div class="input-row">
+            <input type="text" id="username" placeholder="Логин" value="test1">
+        </div>
+        <div class="input-row">
+            <input type="password" id="password" placeholder="Пароль" value="123456">
+        </div>
+        <div class="input-row">
+            <button id="btnLogin">🔑 Войти</button>
+        </div>
+        <div id="authStatus" class="status">Не авторизован</div>
+    </div>
+
+    <!-- ИНФОРМАЦИЯ -->
+    <div class="box" id="infoBox" style="display: none;">
+        <h3>📊 Информация</h3>
+        <div class="info-grid">
+            <span class="label">Сокет:</span>
+            <span class="value" id="infoSocket">-</span>
+            
+            <span class="label">Пользователь:</span>
+            <span class="value" id="infoUser">-</span>
+            
+            <span class="label">Онлайн:</span>
+            <span class="value" id="infoOnline">0</span>
+            
+            <span class="label">Чатов:</span>
+            <span class="value" id="infoChats">-</span>
+        </div>
+    </div>
+
+    <!-- ЧАТ -->
+    <div class="box" id="chatBox" style="display: none;">
+        <h3>💬 Чат</h3>
+        <div class="input-row">
+            <input type="text" id="chatId" placeholder="ID чата" value="1">
+        </div>
+
+        <div id="typingIndicator" class="typing-indicator"></div>
+
+        <div class="message-list" id="messages">
+            <div class="msg system">Сообщения появятся здесь...</div>
+        </div>
+
+        <div class="input-row" style="margin-top: 8px;">
+            <input type="text" id="messageInput" placeholder="Введите сообщение...">
+            <button id="btnSend">📤 Отправить</button>
+        </div>
+    </div>
+
+    <!-- ЛОГ -->
+    <div class="box">
+        <h3>📋 Лог событий</h3>
+        <div class="message-list" id="eventLog" style="max-height: 200px;"></div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+    <script>
+        const API_URL = 'http://localhost:5000/api';
+        const SOCKET_URL = 'http://localhost:5000';
+
+        let socket = null;
+        let authToken = null;
+        let currentUser = null;
+        let currentChatId = null;
+
+        let typingInterval = null;
+        let typingStopTimeout = null;
+
+        const $ = (id) => document.getElementById(id);
+
+        const usernameInput = $('username');
+        const passwordInput = $('password');
+        const btnLogin = $('btnLogin');
+        const authStatus = $('authStatus');
+
+        const infoBox = $('infoBox');
+        const infoSocket = $('infoSocket');
+        const infoUser = $('infoUser');
+        const infoOnline = $('infoOnline');
+        const infoChats = $('infoChats');
+
+        const chatBox = $('chatBox');
+        const chatIdInput = $('chatId');
+        const typingIndicator = $('typingIndicator');
+        const messagesBox = $('messages');
+        const messageInput = $('messageInput');
+        const btnSend = $('btnSend');
+
+        const eventLog = $('eventLog');
+
+        function log(message, type = 'info') {
+            const time = new Date().toLocaleTimeString('ru-RU');
+            const div = document.createElement('div');
+            div.className = 'msg' + (type === 'system' ? ' system' : '');
+            div.textContent = `[${time}] ${message}`;
+            eventLog.prepend(div);
+            console.log(message);
+        }
+
+        function setAuthStatus(text, isError = false) {
+            authStatus.textContent = text;
+            authStatus.className = 'status' + (isError ? ' error' : ' connected');
+        }
+
+        // ВХОД
+        btnLogin.addEventListener('click', async () => {
+            const username = usernameInput.value.trim();
+            const password = passwordInput.value.trim();
+
+            if (!username || !password) {
+                alert('Введите логин и пароль');
+                return;
+            }
+
+            log(`🔑 Вход: ${username}...`);
+
+            try {
+                const res = await fetch(`${API_URL}/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password }),
+                });
+
+                const data = await res.json();
+
+                if (res.ok && data.token) {
+                    authToken = data.token;
+                    currentUser = data.user;
+
+                    log(`✅ Вход выполнен: ${data.user.display_name}`);
+                    setAuthStatus(`Вошёл как ${data.user.display_name}`);
+
+                    infoBox.style.display = 'block';
+                    chatBox.style.display = 'block';
+                    infoUser.textContent = data.user.display_name;
+
+                    connectSocket();
+                } else {
+                    log(`❌ Ошибка входа: ${data.error || 'неизвестная'}`);
+                    setAuthStatus(data.error || 'Ошибка входа', true);
+                }
+            } catch (err) {
+                log(`❌ Ошибка сети: ${err.message}`);
+                setAuthStatus('Ошибка сети', true);
+            }
+        });
+
+        // SOCKET.IO
+        function connectSocket() {
+            if (socket) socket.disconnect();
+
+            log('🔌 Подключение к Socket.IO...');
+
+            socket = io(SOCKET_URL, {
+                auth: { token: authToken },
+                transports: ['websocket', 'polling'],
+            });
+
+            socket.on('connect', () => {
+                log(`✅ Socket подключён: ${socket.id}`);
+                infoSocket.textContent = socket.id;
+                setAuthStatus('Подключён');
+                socket.emit('join_chats');
+            });
+
+            socket.on('connect_error', (err) => {
+                log(`❌ Ошибка подключения: ${err.message}`);
+                setAuthStatus('Ошибка Socket: ' + err.message, true);
+            });
+
+            socket.on('joined_chats', (data) => {
+                log(`📥 Присоединился к ${data.chatIds.length} чатам`);
+                infoChats.textContent = data.chatIds.join(', ') || 'нет';
+            });
+
+            socket.on('new_message', (msg) => {
+                const isOwn = msg.sender_id === currentUser.id;
+                const time = new Date(msg.created_at).toLocaleTimeString('ru-RU', {
+                    hour: '2-digit', minute: '2-digit',
+                });
+
+                const div = document.createElement('div');
+                div.className = 'msg' + (isOwn ? ' own' : '');
+                div.innerHTML = `
+                    ${!isOwn ? `<div class="sender">${msg.display_name}</div>` : ''}
+                    <div>${escapeHtml(msg.text || '')}</div>
+                    <div class="time">${time}</div>
+                `;
+                messagesBox.appendChild(div);
+                messagesBox.scrollTop = messagesBox.scrollHeight;
+
+                if (!isOwn) typingIndicator.textContent = '';
+            });
+
+            socket.on('user_typing', (data) => {
+                if (data.userId === currentUser.id) return;
+                typingIndicator.textContent = `✍️ ${data.displayName} печатает...`;
+                log(`⌨️ ${data.displayName} печатает`);
+            });
+
+            socket.on('user_stopped_typing', (data) => {
+                if (data.userId === currentUser.id) return;
+                typingIndicator.textContent = '';
+            });
+
+            socket.on('user_online', (data) => {
+                log(`🟢 ${data.displayName} онлайн`);
+            });
+
+            socket.on('user_offline', (data) => {
+                log(`⚫ Пользователь ${data.userId} офлайн`);
+            });
+
+            socket.on('online_count', (count) => {
+                infoOnline.textContent = count;
+            });
+
+            socket.on('error', (data) => {
+                log(`❌ Ошибка: ${data.message}`);
+            });
+        }
+
+        // ОТПРАВКА
+        btnSend.addEventListener('click', () => {
+            const text = messageInput.value.trim();
+            if (!text) return;
+
+            currentChatId = parseInt(chatIdInput.value, 10);
+            if (!currentChatId) {
+                alert('Введите ID чата');
+                return;
+            }
+
+            socket.emit('send_message', {
+                chatId: currentChatId,
+                text: text,
+                tempId: Date.now(),
+            });
+
+            socket.emit('stop_typing', { chatId: currentChatId });
+            stopTypingLoop();
+            messageInput.value = '';
+        });
+
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') btnSend.click();
+        });
+
+        messageInput.addEventListener('input', () => {
+            currentChatId = parseInt(chatIdInput.value, 10);
+            if (!currentChatId || !socket) return;
+
+            socket.emit('typing', { chatId: currentChatId });
+
+            if (!typingInterval) {
+                typingInterval = setInterval(() => {
+                    if (socket && currentChatId) {
+                        socket.emit('typing', { chatId: currentChatId });
+                    }
+                }, 2000);
+            }
+
+            clearTimeout(typingStopTimeout);
+            typingStopTimeout = setTimeout(() => {
+                if (socket && currentChatId) {
+                    socket.emit('stop_typing', { chatId: currentChatId });
+                }
+                stopTypingLoop();
+            }, 3000);
+        });
+
+        function stopTypingLoop() {
+            clearInterval(typingInterval);
+            typingInterval = null;
+            clearTimeout(typingStopTimeout);
+            typingStopTimeout = null;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        log('🎯 Тест Socket.IO загружен');
+        log('📌 Войди как test1 в этом окне');
+        log('📌 Открой второе окно (инкогнито) → войди как test2');
+        log('📌 Начни печатать → увидишь «печатает...» у другого');
+    </script>
+</body>
+</html>
