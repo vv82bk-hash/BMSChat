@@ -11,6 +11,9 @@ const fs = require('fs');
 const config = require('./config');
 const logger = require('./utils/logger');
 const { pool } = require('./database/init');
+// Страховка от падения при ошибках простаивающих соединений
+pool.on('error', (err) => {
+    console.error('⚠️ Ошибка пула PostgreSQL (не критично):', err.message);
 const { initSocket } = require('./socket');
 
 // =====================================================
