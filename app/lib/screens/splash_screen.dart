@@ -219,41 +219,50 @@ class _SplashScreenState extends State<SplashScreen>
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
                                     // ─────────────────────────────
-                                    // Логотип
+                                    // ЛОГОТИП (картинка отряда)
                                     // ─────────────────────────────
                                     ScaleTransition(
                                         scale: _logoScale,
                                         child: FadeTransition(
                                             opacity: _logoOpacity,
                                             child: Container(
-                                                width: 140,
-                                                height: 140,
+                                                width: 220,
+                                                height: 220,
                                                 decoration: BoxDecoration(
                                                     shape: BoxShape.circle,
-                                                    gradient: const LinearGradient(
-                                                        begin: Alignment.topLeft,
-                                                        end: Alignment.bottomRight,
-                                                        colors: [
-                                                            RastaTheme.rastaRed,
-                                                            RastaTheme.rastaYellow,
-                                                            RastaTheme.rastaGreen,
-                                                        ],
-                                                    ),
                                                     boxShadow: [
                                                         BoxShadow(
-                                                            color: RastaTheme.rastaYellow
-                                                                .withValues(alpha: 0.3),
+                                                            color: RastaTheme
+                                                                .rastaYellow
+                                                                .withValues(
+                                                                    alpha: 0.25,
+                                                                ),
                                                             blurRadius: 40,
                                                             spreadRadius: 5,
                                                         ),
                                                     ],
                                                 ),
-                                                child: const Center(
-                                                    child: Text(
-                                                        '🎯',
-                                                        style: TextStyle(
-                                                            fontSize: 64,
-                                                        ),
+                                                child: ClipOval(
+                                                    child: Image.asset(
+                                                        'assets/images/logo.png',
+                                                        fit: BoxFit.cover,
+                                                        errorBuilder: (context,
+                                                            error, stackTrace) {
+                                                            // Фолбэк — эмодзи, если картинка не найдена
+                                                            return Container(
+                                                                color: RastaTheme
+                                                                    .surfaceSecondary,
+                                                                child: const Center(
+                                                                    child: Text(
+                                                                        '🎯',
+                                                                        style: TextStyle(
+                                                                            fontSize:
+                                                                                80,
+                                                                        ),
+                                                                    ),
+                                                                ),
+                                                            );
+                                                        },
                                                     ),
                                                 ),
                                             ),
@@ -307,9 +316,10 @@ class _SplashScreenState extends State<SplashScreen>
                                                 ),
                                                 const SizedBox(height: 12),
                                                 Text(
-                                                    'Двигай. Вдохновляй',
+                                                    '🌿 One Love 🤙',
                                                     style: TextStyle(
                                                         fontSize: 14,
+                                                        fontWeight: FontWeight.w600,
                                                         color: RastaTheme.textMuted
                                                             .withValues(alpha: 0.9),
                                                         letterSpacing: 1.5,

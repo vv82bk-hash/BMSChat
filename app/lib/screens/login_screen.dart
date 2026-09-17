@@ -431,9 +431,10 @@ class _LoginScreenState extends State<LoginScreen> {
                                     // ФУТЕР
                                     // ══════════════════════════════════
                                     Text(
-                                        '🌿 One Love ✌️',
+                                        '🌿 One Love 🤙',
                                         style: TextStyle(
-                                            fontSize: 12,
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600,
                                             color: RastaTheme.textMuted
                                                 .withValues(alpha: 0.7),
                                         ),
@@ -449,26 +450,17 @@ class _LoginScreenState extends State<LoginScreen> {
     }
 
     // =====================================================
-    // 🎨 ЛОГОТИП
+    // 🎨 ЛОГОТИП (картинка отряда)
     // =====================================================
     Widget _buildLogo() {
         return Column(
             children: [
-                // Круг с градиентом и эмодзи
+                // Круг с картинкой логотипа
                 Container(
-                    width: 100,
-                    height: 100,
+                    width: 120,
+                    height: 120,
                     decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        gradient: const LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                                RastaTheme.rastaRed,
-                                RastaTheme.rastaYellow,
-                                RastaTheme.rastaGreen,
-                            ],
-                        ),
                         boxShadow: [
                             BoxShadow(
                                 color: RastaTheme.rastaYellow.withValues(alpha: 0.3),
@@ -477,8 +469,23 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                         ],
                     ),
-                    child: const Center(
-                        child: Text('🎯', style: TextStyle(fontSize: 48)),
+                    child: ClipOval(
+                        child: Image.asset(
+                            'assets/images/logo.png',
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                                // Фолбэк — эмодзи, если картинка не найдена
+                                return Container(
+                                    color: RastaTheme.surfaceSecondary,
+                                    child: const Center(
+                                        child: Text(
+                                            '🎯',
+                                            style: TextStyle(fontSize: 56),
+                                        ),
+                                    ),
+                                );
+                            },
+                        ),
                     ),
                 ),
 

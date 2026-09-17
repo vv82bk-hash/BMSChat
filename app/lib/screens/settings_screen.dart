@@ -1,3 +1,13 @@
+// =====================================================
+// ⚙️ BMSChat — ЭКРАН НАСТРОЕК
+// =====================================================
+// Настройки приложения:
+//   • Смена пароля
+//   • Политика обработки ПД
+//   • О приложении
+//   • Выход из аккаунта
+// =====================================================
+
 import 'package:flutter/material.dart';
 
 import '../themes/rasta_theme.dart';
@@ -58,9 +68,10 @@ class SettingsScreen extends StatelessWidget {
                     const SizedBox(height: 24),
                     Center(
                         child: Text(
-                            '🌿 One Love ✌️',
+                            '🌿 One Love 🤙',
                             style: TextStyle(
-                                fontSize: 12,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
                                 color: RastaTheme.textMuted.withValues(alpha: 0.6),
                             ),
                         ),
