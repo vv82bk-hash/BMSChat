@@ -1,14 +1,14 @@
 // =====================================================
-// 📤 BMSChat — ЗАГРУЗКА ФАЙЛОВ (PostgreSQL)
+// 📤 BMSChat — ЗАГРУЗКА ФАЙЛОВ (PostgreSQL BYTEA)
 // =====================================================
 // POST /api/upload
+// Файл сохраняется прямо в БД (колонка file_data).
 // =====================================================
 
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
 const crypto = require('crypto');
 
 const { authMiddleware } = require('../middleware/auth');
@@ -16,29 +16,12 @@ const { pool } = require('../database/init');
 const logger = require('../utils/logger');
 
 // =====================================================
-// 📁 ПАПКА UPLOADS
+// 💾 ХРАНИЛИЩЕ MULTER — в памяти!
 // =====================================================
-const uploadsDir = path.join(__dirname, '..', 'uploads');
-
-if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
-    logger.info('Создана папка uploads', { path: uploadsDir });
-}
-
+// ВАЖНО: storage = memoryStorage, а не diskStorage.
+// Файл попадает в req.file.buffer и потом пишется в БД.
 // =====================================================
-// 💾 ХРАНИЛИЩЕ MULTER
-// =====================================================
-const storage = multer.diskStorage({
-    destination: (_req, _file, cb) => {
-        cb(null, uploadsDir);
-    },
-    filename: (_req, file, cb) => {
-        const ext = path.extname(file.originalname).toLowerCase();
-        const unique = crypto.randomBytes(8).toString('hex');
-        const filename = `${Date.now()}_${unique}${ext}`;
-        cb(null, filename);
-    },
-});
+const storage = multer.memoryStorage();
 
 // =====================================================
 // 🛡️ ФИЛЬТР ФАЙЛОВ
@@ -72,13 +55,10 @@ const fileFilter = (_req, file, cb) => {
     cb(new Error(`Недопустимый тип файла: ${file.mimetype}`));
 };
 
-// =====================================================
-// ⚙️ КОНФИГ MULTER
-// =====================================================
 const upload = multer({
     storage,
     fileFilter,
-    limits: { fileSize: 10 * 1024 * 1024 },
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
 });
 
 // =====================================================
@@ -104,7 +84,9 @@ router.post('/', authMiddleware, (req, res) => {
         }
 
         try {
+            // ─────────────────────────────────────────
             // Определяем тип
+            // ─────────────────────────────────────────
             let fileType = req.body.type || 'file';
             if (req.file.mimetype.startsWith('image/')) {
                 fileType = 'image';
@@ -121,22 +103,46 @@ router.post('/', authMiddleware, (req, res) => {
                 }
             }
 
-            const result = {
-                file_path: `/uploads/${req.file.filename}`,
-                file_name: req.file.originalname,
-                file_size: req.file.size,
-                mime_type: req.file.mimetype,
-                file_type: fileType,
-            };
+            // ─────────────────────────────────────────
+            // Сохраняем файл в БД (BYTEA)
+            // ─────────────────────────────────────────
+            const fileId = crypto.randomBytes(16).toString('hex');
 
-            logger.success('Файл загружен', {
+            const result = await pool.query(`
+                INSERT INTO uploaded_files (
+                    id, user_id, file_data, file_name, file_size,
+                    mime_type, file_type, created_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+                RETURNING id, file_name, file_size, mime_type, file_type
+            `, [
+                fileId,
+                req.user.id,
+                req.file.buffer,
+                req.file.originalname,
+                req.file.size,
+                req.file.mimetype,
+                fileType,
+            ]);
+
+            const saved = result.rows[0];
+
+            logger.success('Файл загружен в БД', {
                 userId: req.user.id,
-                name: result.file_name,
-                size: result.file_size,
-                type: result.file_type,
+                fileId: saved.id,
+                name: saved.file_name,
+                size: saved.file_size,
+                type: saved.file_type,
             });
 
-            res.status(201).json(result);
+            res.status(201).json({
+                file_path: `/api/files/${saved.id}`,
+                file_id: saved.id,
+                file_name: saved.file_name,
+                file_size: saved.file_size,
+                mime_type: saved.mime_type,
+                file_type: saved.file_type,
+            });
         } catch (error) {
             logger.error('Ошибка обработки загрузки', error);
             res.status(500).json({ error: 'Ошибка сервера' });

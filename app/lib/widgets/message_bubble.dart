@@ -1,3 +1,7 @@
+// =====================================================
+// 💬 BMSChat — ПУЗЫРЬ СООБЩЕНИЯ
+// =====================================================
+
 import 'package:flutter/material.dart';
 
 import '../config/constants.dart';
@@ -24,12 +28,12 @@ class MessageBubble extends StatelessWidget {
                 alignment: isOwn ? Alignment.centerRight : Alignment.centerLeft,
                 child: Container(
                     margin: EdgeInsets.only(
-                        left: isOwn ? 60 : 12,
-                        right: isOwn ? 12 : 60,
-                        top: 2,
-                        bottom: 2,
+                        left: isOwn ? 50 : 10,
+                        right: isOwn ? 10 : 50,
+                        top: 1.5,
+                        bottom: 1.5,
                     ),
-                    padding: EdgeInsets.all(message.isImageMessage ? 4 : 14),
+                    padding: EdgeInsets.all(message.isImageMessage ? 3 : 10),
                     decoration: BoxDecoration(
                         gradient: isOwn && !message.isImageMessage
                             ? RastaTheme.ownBubbleGradient
@@ -38,10 +42,10 @@ class MessageBubble extends StatelessWidget {
                             ? null
                             : (isOwn ? null : RastaTheme.bubbleOther),
                         borderRadius: BorderRadius.only(
-                            topLeft: const Radius.circular(18),
-                            topRight: const Radius.circular(18),
-                            bottomLeft: Radius.circular(isOwn ? 18 : 4),
-                            bottomRight: Radius.circular(isOwn ? 4 : 18),
+                            topLeft: const Radius.circular(16),
+                            topRight: const Radius.circular(16),
+                            bottomLeft: Radius.circular(isOwn ? 16 : 4),
+                            bottomRight: Radius.circular(isOwn ? 4 : 16),
                         ),
                     ),
                     child: Column(
@@ -49,13 +53,15 @@ class MessageBubble extends StatelessWidget {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                             // Имя отправителя (только для чужих, не для картинок)
-                            if (!isOwn && message.senderName != null && !message.isImageMessage)
+                            if (!isOwn &&
+                                message.senderName != null &&
+                                !message.isImageMessage)
                                 Padding(
-                                    padding: const EdgeInsets.only(bottom: 4),
+                                    padding: const EdgeInsets.only(bottom: 3),
                                     child: Text(
                                         message.senderName!,
                                         style: const TextStyle(
-                                            fontSize: 12,
+                                            fontSize: 11,
                                             fontWeight: FontWeight.w700,
                                             color: RastaTheme.rastaYellow,
                                         ),
@@ -66,19 +72,22 @@ class MessageBubble extends StatelessWidget {
                             if (message.replyToId != null)
                                 Padding(
                                     padding: EdgeInsets.only(
-                                        bottom: 6,
-                                        left: message.isImageMessage ? 10 : 0,
-                                        right: message.isImageMessage ? 10 : 0,
-                                        top: message.isImageMessage ? 6 : 0,
+                                        bottom: 5,
+                                        left: message.isImageMessage ? 8 : 0,
+                                        right: message.isImageMessage ? 8 : 0,
+                                        top: message.isImageMessage ? 5 : 0,
                                     ),
                                     child: Container(
-                                        padding: const EdgeInsets.all(6),
+                                        padding: const EdgeInsets.all(5),
                                         decoration: BoxDecoration(
-                                            color: Colors.black.withValues(alpha: 0.15),
-                                            borderRadius: BorderRadius.circular(6),
+                                            color: Colors.black
+                                                .withValues(alpha: 0.15),
+                                            borderRadius:
+                                                BorderRadius.circular(5),
                                             border: const Border(
                                                 left: BorderSide(
-                                                    color: RastaTheme.rastaYellow,
+                                                    color: RastaTheme
+                                                        .rastaYellow,
                                                     width: 3,
                                                 ),
                                             ),
@@ -86,7 +95,7 @@ class MessageBubble extends StatelessWidget {
                                         child: const Text(
                                             'Ответ на сообщение',
                                             style: TextStyle(
-                                                fontSize: 11,
+                                                fontSize: 10,
                                                 fontStyle: FontStyle.italic,
                                                 color: RastaTheme.textMuted,
                                             ),
@@ -95,7 +104,7 @@ class MessageBubble extends StatelessWidget {
                                 ),
 
                             // ═══════════════════════════════════════
-                            // КОНТЕНТ: картинка / файл / текст
+                            // КОНТЕНТ
                             // ═══════════════════════════════════════
                             if (message.isImageMessage)
                                 _buildImage(message)
@@ -104,34 +113,38 @@ class MessageBubble extends StatelessWidget {
                             else
                                 _buildText(message, isOwn),
 
-                            // Время + метки (для картинок — под ними)
+                            // Время + метки
                             Padding(
                                 padding: EdgeInsets.only(
-                                    top: 4,
-                                    left: message.isImageMessage ? 10 : 0,
-                                    right: message.isImageMessage ? 10 : 0,
-                                    bottom: message.isImageMessage ? 6 : 0,
+                                    top: 3,
+                                    left: message.isImageMessage ? 8 : 0,
+                                    right: message.isImageMessage ? 8 : 0,
+                                    bottom: message.isImageMessage ? 5 : 0,
                                 ),
                                 child: Row(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
                                         if (message.isEdited)
                                             const Padding(
-                                                padding: EdgeInsets.only(right: 4),
+                                                padding:
+                                                    EdgeInsets.only(right: 3),
                                                 child: Text(
                                                     'изменено',
                                                     style: TextStyle(
-                                                        fontSize: 10,
-                                                        fontStyle: FontStyle.italic,
-                                                        color: RastaTheme.textMuted,
+                                                        fontSize: 9,
+                                                        fontStyle:
+                                                            FontStyle.italic,
+                                                        color: RastaTheme
+                                                            .textMuted,
                                                     ),
                                                 ),
                                             ),
                                         Text(
                                             message.formattedTime,
                                             style: TextStyle(
-                                                fontSize: 10,
-                                                color: isOwn && !message.isImageMessage
+                                                fontSize: 9,
+                                                color: isOwn &&
+                                                        !message.isImageMessage
                                                     ? Colors.black54
                                                     : RastaTheme.textMuted,
                                             ),
@@ -144,26 +157,33 @@ class MessageBubble extends StatelessWidget {
                             if (message.hasReactions)
                                 Padding(
                                     padding: EdgeInsets.only(
-                                        top: 4,
-                                        left: message.isImageMessage ? 10 : 0,
-                                        right: message.isImageMessage ? 10 : 0,
-                                        bottom: message.isImageMessage ? 6 : 0,
+                                        top: 3,
+                                        left: message.isImageMessage ? 8 : 0,
+                                        right: message.isImageMessage ? 8 : 0,
+                                        bottom: message.isImageMessage ? 5 : 0,
                                     ),
                                     child: Wrap(
-                                        spacing: 4,
+                                        spacing: 3,
+                                        runSpacing: 2,
                                         children: message.reactionCounts.entries
                                             .map((entry) => Container(
-                                                padding: const EdgeInsets.symmetric(
-                                                    horizontal: 6,
-                                                    vertical: 2,
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                    horizontal: 5,
+                                                    vertical: 1.5,
                                                 ),
                                                 decoration: BoxDecoration(
-                                                    color: Colors.black.withValues(alpha: 0.15),
-                                                    borderRadius: BorderRadius.circular(10),
+                                                    color: Colors.black
+                                                        .withValues(alpha: 0.15),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            8),
                                                 ),
                                                 child: Text(
                                                     '${entry.key} ${entry.value}',
-                                                    style: const TextStyle(fontSize: 12),
+                                                    style: const TextStyle(
+                                                        fontSize: 11,
+                                                    ),
                                                 ),
                                             ))
                                             .toList(),
@@ -183,17 +203,17 @@ class MessageBubble extends StatelessWidget {
         final url = Constants.getFullFileUrl(message.filePath!);
 
         return ClipRRect(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(13),
             child: Image.network(
                 url,
-                width: 250,
+                width: 220,
                 fit: BoxFit.cover,
                 loadingBuilder: (context, child, progress) {
                     if (progress == null) return child;
 
                     return Container(
-                        width: 250,
-                        height: 200,
+                        width: 220,
+                        height: 180,
                         color: RastaTheme.surfaceSecondary,
                         child: Center(
                             child: CircularProgressIndicator(
@@ -201,7 +221,8 @@ class MessageBubble extends StatelessWidget {
                                     ? progress.cumulativeBytesLoaded /
                                         progress.expectedTotalBytes!
                                     : null,
-                                valueColor: const AlwaysStoppedAnimation<Color>(
+                                valueColor:
+                                    const AlwaysStoppedAnimation<Color>(
                                     RastaTheme.rastaYellow,
                                 ),
                             ),
@@ -210,11 +231,11 @@ class MessageBubble extends StatelessWidget {
                 },
                 errorBuilder: (context, error, stackTrace) {
                     return Container(
-                        width: 250,
-                        height: 150,
+                        width: 220,
+                        height: 140,
                         decoration: BoxDecoration(
                             color: RastaTheme.surfaceSecondary,
-                            borderRadius: BorderRadius.circular(14),
+                            borderRadius: BorderRadius.circular(13),
                         ),
                         child: const Center(
                             child: Column(
@@ -222,14 +243,14 @@ class MessageBubble extends StatelessWidget {
                                 children: [
                                     Icon(
                                         Icons.broken_image_outlined,
-                                        size: 40,
+                                        size: 36,
                                         color: RastaTheme.textMuted,
                                     ),
-                                    SizedBox(height: 8),
+                                    SizedBox(height: 6),
                                     Text(
                                         'Не удалось загрузить',
                                         style: TextStyle(
-                                            fontSize: 12,
+                                            fontSize: 11,
                                             color: RastaTheme.textMuted,
                                         ),
                                     ),
@@ -243,7 +264,7 @@ class MessageBubble extends StatelessWidget {
     }
 
     // =====================================================
-    // 📄 ФАЙЛ (не картинка)
+    // 📄 ФАЙЛ
     // =====================================================
     Widget _buildFile(Message message, bool isOwn) {
         final path = message.filePath!;
@@ -255,14 +276,14 @@ class MessageBubble extends StatelessWidget {
                 Icon(
                     Icons.insert_drive_file_outlined,
                     color: isOwn ? Colors.black54 : RastaTheme.rastaYellow,
-                    size: 32,
+                    size: 28,
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 Flexible(
                     child: Text(
                         fileName,
                         style: TextStyle(
-                            fontSize: 14,
+                            fontSize: 13,
                             color: isOwn
                                 ? RastaTheme.bubbleOwnText
                                 : RastaTheme.bubbleOtherText,
@@ -282,13 +303,13 @@ class MessageBubble extends StatelessWidget {
         return Text(
             message.displayText,
             style: TextStyle(
-                fontSize: 16,
+                fontSize: 15,
                 color: isOwn
                     ? RastaTheme.bubbleOwnText
                     : RastaTheme.bubbleOtherText,
-                fontStyle: message.isDeleted
-                    ? FontStyle.italic
-                    : FontStyle.normal,
+                fontStyle:
+                    message.isDeleted ? FontStyle.italic : FontStyle.normal,
+                height: 1.25,
             ),
         );
     }

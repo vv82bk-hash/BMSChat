@@ -1,3 +1,7 @@
+// =====================================================
+// 💬 BMSChat — ЭКРАН ЧАТА
+// =====================================================
+
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
@@ -6,9 +10,10 @@ import '../models/message.dart';
 import '../providers/auth_provider.dart';
 import '../providers/chat_provider.dart';
 import '../themes/rasta_theme.dart';
+import '../widgets/animated_message_wrapper.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/reaction_picker.dart';
-import '../widgets/typing_indicator.dart';
+import 'users_screen.dart';
 
 class ChatScreen extends StatefulWidget {
     final int chatId;
@@ -29,10 +34,41 @@ class _ChatScreenState extends State<ChatScreen> {
     bool _isTyping = false;
 
     @override
+    void initState() {
+        super.initState();
+
+        // 📜 Автоскролл после первой отрисовки
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+            _scrollToBottom(jump: true);
+        });
+
+        // 📜 Слушаем изменения сообщений — скроллим при новых
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+            final chat = Provider.of<ChatProvider>(context, listen: false);
+            chat.addListener(_onChatChanged);
+        });
+    }
+
+    @override
     void dispose() {
+        final chat = Provider.of<ChatProvider>(context, listen: false);
+        chat.removeListener(_onChatChanged);
         _messageController.dispose();
         _scrollController.dispose();
         super.dispose();
+    }
+
+    void _onChatChanged() {
+        // Если пришло новое сообщение — скроллим вниз
+        if (!mounted) return;
+        if (_scrollController.hasClients) {
+            final position = _scrollController.position;
+            final isNearBottom = position.pixels >= position.maxScrollExtent - 200;
+
+            if (isNearBottom) {
+                _scrollToBottom();
+            }
+        }
     }
 
     // ============================================
@@ -70,7 +106,6 @@ class _ChatScreenState extends State<ChatScreen> {
             );
 
             if (image == null) return;
-
             if (!mounted) return;
 
             _showInfo('Загрузка фото...');
@@ -113,13 +148,19 @@ class _ChatScreenState extends State<ChatScreen> {
     // ============================================
     // 📜 АВТОСКРОЛЛ
     // ============================================
-    void _scrollToBottom() {
+    void _scrollToBottom({bool jump = false}) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (_scrollController.hasClients) {
+            if (!_scrollController.hasClients) return;
+
+            final maxExtent = _scrollController.position.maxScrollExtent;
+
+            if (jump) {
+                _scrollController.jumpTo(maxExtent);
+            } else {
                 _scrollController.animateTo(
-                    _scrollController.position.maxScrollExtent,
-                    duration: const Duration(milliseconds: 250),
-                    curve: Curves.easeOut,
+                    maxExtent,
+                    duration: const Duration(milliseconds: 300),
+                    curve: Curves.easeOutCubic,
                 );
             }
         });
@@ -144,6 +185,18 @@ class _ChatScreenState extends State<ChatScreen> {
                 backgroundColor: RastaTheme.success,
                 behavior: SnackBarBehavior.floating,
                 duration: const Duration(seconds: 2),
+            ),
+        );
+    }
+
+    // ============================================
+    // 👥 ОТКРЫТЬ УЧАСТНИКОВ
+    // ============================================
+    void _openUsers() {
+        Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (_) => const UsersScreen(),
             ),
         );
     }
@@ -174,6 +227,13 @@ class _ChatScreenState extends State<ChatScreen> {
                         if (activeChat != null) _buildSubtitle(chat),
                     ],
                 ),
+                actions: [
+                    IconButton(
+                        icon: const Icon(Icons.people_outline),
+                        tooltip: 'Участники',
+                        onPressed: _openUsers,
+                    ),
+                ],
             ),
             body: Column(
                 children: [
@@ -193,29 +253,25 @@ class _ChatScreenState extends State<ChatScreen> {
                                     padding: const EdgeInsets.symmetric(
                                         vertical: 8,
                                     ),
-                                    itemCount: chat.messages.length +
-                                        (chat.hasTypingUsers ? 1 : 0),
+                                    itemCount: chat.messages.length,
                                     itemBuilder: (context, index) {
-                                        if (chat.hasTypingUsers &&
-                                            index == chat.messages.length) {
-                                            return TypingIndicator(
-                                                userName: chat.typingUser ?? '',
-                                            );
-                                        }
-
                                         final message = chat.messages[index];
                                         final isOwn =
                                             message.senderId == currentUserId;
 
-                                        return MessageBubble(
-                                            message: message,
-                                            isOwn: isOwn,
-                                            onLongPress: () =>
-                                                _showReactionPicker(
-                                                    context,
-                                                    message,
-                                                    isOwn,
-                                                ),
+                                        return AnimatedMessageWrapper(
+                                            key: ValueKey(message.id),
+                                            messageId: message.id,
+                                            child: MessageBubble(
+                                                message: message,
+                                                isOwn: isOwn,
+                                                onLongPress: () =>
+                                                    _showReactionPicker(
+                                                        context,
+                                                        message,
+                                                        isOwn,
+                                                    ),
+                                            ),
                                         );
                                     },
                                 ),
@@ -236,6 +292,22 @@ class _ChatScreenState extends State<ChatScreen> {
     // 📊 ПОДЗАГОЛОВОК APPBAR
     // ============================================
     Widget _buildSubtitle(ChatProvider chat) {
+        // 👑 Если кто-то печатает — показываем ЭТО
+        if (chat.hasTypingUsers) {
+            return AnimatedSwitcher(
+                duration: const Duration(milliseconds: 200),
+                child: Text(
+                    '${chat.typingUser} печатает...',
+                    key: ValueKey('typing_${chat.typingUser}'),
+                    style: const TextStyle(
+                        fontSize: 11,
+                        fontStyle: FontStyle.italic,
+                        color: RastaTheme.rastaYellow,
+                    ),
+                ),
+            );
+        }
+
         final activeChat = chat.activeChat;
         if (activeChat == null) return const SizedBox.shrink();
 
@@ -351,7 +423,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     // ============================================
-    // ⌨️ ПОЛЕ ВВОДА С КНОПКОЙ 📎
+    // ⌨️ ПОЛЕ ВВОДА
     // ============================================
     Widget _buildInputField() {
         return Container(
@@ -364,7 +436,6 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             child: Row(
                 children: [
-                    // 📎 Кнопка выбора фото
                     IconButton(
                         icon: const Icon(
                             Icons.attach_file,
@@ -374,7 +445,6 @@ class _ChatScreenState extends State<ChatScreen> {
                         tooltip: 'Фото',
                     ),
 
-                    // Поле ввода
                     Expanded(
                         child: TextField(
                             controller: _messageController,
@@ -408,7 +478,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
                     const SizedBox(width: 4),
 
-                    // ⭕ Отправить
                     CircleAvatar(
                         radius: 24,
                         backgroundColor: RastaTheme.rastaYellow,

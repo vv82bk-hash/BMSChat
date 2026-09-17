@@ -1,13 +1,19 @@
+// =====================================================
+// 💬 BMSChat — ЭКРАН СПИСКА ЧАТОВ
+// =====================================================
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/chat.dart';
 import '../providers/auth_provider.dart';
 import '../providers/chat_provider.dart';
+import '../providers/users_provider.dart';
 import '../themes/rasta_theme.dart';
 import '../utils/app_logger.dart';
 import 'chat_screen.dart';
 import 'profile_screen.dart';
+import 'users_screen.dart';
 
 class ChatsScreen extends StatefulWidget {
     const ChatsScreen({super.key});
@@ -41,6 +47,9 @@ class _ChatsScreenState extends State<ChatsScreen> {
         await chat.loadChats();
     }
 
+    // ============================================
+    // 📂 ОТКРЫТИЕ ЧАТА С АНИМАЦИЕЙ (снизу вверх)
+    // ============================================
     Future<void> _openChat(Chat chat) async {
         AppLogger.info('📂 Открытие: ${chat.displayName}');
 
@@ -50,8 +59,38 @@ class _ChatsScreenState extends State<ChatsScreen> {
         if (!mounted) return;
 
         Navigator.of(context).push(
+            PageRouteBuilder(
+                pageBuilder: (_, __, ___) => ChatScreen(chatId: chat.id),
+                transitionsBuilder: (_, animation, __, child) {
+                    final curvedAnimation = CurvedAnimation(
+                        parent: animation,
+                        curve: Curves.easeOutCubic,
+                    );
+
+                    return SlideTransition(
+                        position: Tween<Offset>(
+                            begin: const Offset(0, 1), // снизу
+                            end: Offset.zero,
+                        ).animate(curvedAnimation),
+                        child: FadeTransition(
+                            opacity: curvedAnimation,
+                            child: child,
+                        ),
+                    );
+                },
+                transitionDuration: const Duration(milliseconds: 300),
+            ),
+        );
+    }
+
+    // ============================================
+    // 👥 ОТКРЫТЬ УЧАСТНИКОВ
+    // ============================================
+    void _openUsers() {
+        Navigator.push(
+            context,
             MaterialPageRoute(
-                builder: (_) => ChatScreen(chatId: chat.id),
+                builder: (_) => const UsersScreen(),
             ),
         );
     }
@@ -91,8 +130,10 @@ class _ChatsScreenState extends State<ChatsScreen> {
         if (confirmed == true && mounted) {
             final auth = Provider.of<AuthProvider>(context, listen: false);
             final chat = Provider.of<ChatProvider>(context, listen: false);
+            final users = Provider.of<UsersProvider>(context, listen: false);
 
             await chat.clear();
+            users.clear();
             await auth.logout();
 
             if (!mounted) return;
@@ -117,6 +158,8 @@ class _ChatsScreenState extends State<ChatsScreen> {
                     ],
                 ),
                 actions: [
+                    // 👥 Участники с бейджем заявок
+                    _buildUsersButton(),
                     IconButton(
                         icon: const Icon(Icons.person_outline),
                         onPressed: () {
@@ -182,6 +225,53 @@ class _ChatsScreenState extends State<ChatsScreen> {
                     );
                 },
             ),
+        );
+    }
+
+    // ============================================
+    // 👥 КНОПКА «УЧАСТНИКИ» С БЕЙДЖЕМ ЗАЯВОК
+    // ============================================
+    Widget _buildUsersButton() {
+        final users = Provider.of<UsersProvider>(context);
+        final auth = Provider.of<AuthProvider>(context);
+        final count = auth.canApproveUsers ? users.pendingCount : 0;
+
+        return Stack(
+            children: [
+                IconButton(
+                    icon: const Icon(Icons.people_outline),
+                    tooltip: 'Участники',
+                    onPressed: _openUsers,
+                ),
+                if (count > 0)
+                    Positioned(
+                        right: 6,
+                        top: 6,
+                        child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 5,
+                                vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                                color: RastaTheme.error,
+                                borderRadius: BorderRadius.circular(10),
+                            ),
+                            constraints: const BoxConstraints(
+                                minWidth: 18,
+                                minHeight: 18,
+                            ),
+                            child: Text(
+                                count > 99 ? '99+' : '$count',
+                                style: const TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                ),
+                                textAlign: TextAlign.center,
+                            ),
+                        ),
+                    ),
+            ],
         );
     }
 

@@ -312,7 +312,6 @@ class ChatProvider extends ChangeNotifier {
     // 📤 ЗАГРУЗКА ФАЙЛОВ
     // =====================================================
 
-    /// Отправить файл в текущий чат
     Future<bool> sendFile(String localPath, String type) async {
         if (_activeChat == null) {
             AppLogger.warn('Нет активного чата');
@@ -331,7 +330,6 @@ class ChatProvider extends ChangeNotifier {
         try {
             AppLogger.info('📤 Загрузка файла: $type');
 
-            // 1. Загружаем файл на сервер
             final uploadResponse = await ApiService.uploadFile(localPath, type);
 
             if (!uploadResponse.isSuccess || uploadResponse.data == null) {
@@ -346,7 +344,6 @@ class ChatProvider extends ChangeNotifier {
 
             AppLogger.success('Файл загружен: $uploadedPath');
 
-            // 2. Отправляем сообщение с URL
             SocketService.sendMessage(
                 chatId: _activeChat!.id,
                 text: uploadedPath,
@@ -397,31 +394,59 @@ class ChatProvider extends ChangeNotifier {
     // 😀 РЕАКЦИИ
     // =====================================================
 
+    /// Добавить реакцию (оптимистично + API)
     Future<bool> addReaction(int messageId, String emoji) async {
+        if (_authProvider?.user == null) return false;
+        final userId = _authProvider!.user!.id;
+        final displayName = _authProvider!.user!.displayName;
+
+        // 1. Оптимистичное обновление локально
+        _applyReactionLocally(messageId, userId, emoji, displayName);
+
         try {
+            // 2. Отправляем на сервер
             final response = await ApiService.addReaction(messageId, emoji);
+
             if (response.isSuccess) {
                 AppLogger.success('Реакция $emoji добавлена');
                 return true;
             }
+
+            // 3. Если ошибка — откатываем локально
             AppLogger.warn('Ошибка реакции: ${response.error}');
+            _removeReactionLocally(messageId, userId, emoji);
             return false;
         } catch (e) {
             AppLogger.error('Ошибка реакции', e);
+            _removeReactionLocally(messageId, userId, emoji);
             return false;
         }
     }
 
+    /// Убрать реакцию (оптимистично + API)
     Future<bool> removeReaction(int messageId, String emoji) async {
+        if (_authProvider?.user == null) return false;
+        final userId = _authProvider!.user!.id;
+        final displayName = _authProvider!.user!.displayName;
+
+        // 1. Оптимистичное обновление локально
+        _removeReactionLocally(messageId, userId, emoji);
+
         try {
+            // 2. Отправляем на сервер
             final response = await ApiService.removeReaction(messageId, emoji);
+
             if (response.isSuccess) {
                 AppLogger.success('Реакция $emoji убрана');
                 return true;
             }
+
+            // 3. Если ошибка — откатываем локально
+            _applyReactionLocally(messageId, userId, emoji, displayName);
             return false;
         } catch (e) {
             AppLogger.error('Ошибка удаления реакции', e);
+            _applyReactionLocally(messageId, userId, emoji, displayName);
             return false;
         }
     }
@@ -432,6 +457,52 @@ class ChatProvider extends ChangeNotifier {
 
         return _messages[index].reactions
             .any((r) => r.userId == userId && r.emoji == emoji);
+    }
+
+    // =====================================================
+    // 🛠️ ВСПОМОГАТЕЛЬНЫЕ ДЛЯ РЕАКЦИЙ
+    // =====================================================
+
+    void _applyReactionLocally(
+        int messageId,
+        int userId,
+        String emoji,
+        String? displayName,
+    ) {
+        final index = _messages.indexWhere((m) => m.id == messageId);
+        if (index < 0) return;
+
+        final msg = _messages[index];
+        final newReactions = List<Reaction>.from(msg.reactions);
+
+        final exists = newReactions.any(
+            (r) => r.userId == userId && r.emoji == emoji,
+        );
+        if (exists) return;
+
+        newReactions.add(Reaction(
+            emoji: emoji,
+            userId: userId,
+            displayName: displayName,
+        ));
+
+        _messages[index] = msg.copyWith(reactions: newReactions);
+        notifyListeners();
+    }
+
+    void _removeReactionLocally(int messageId, int userId, String emoji) {
+        final index = _messages.indexWhere((m) => m.id == messageId);
+        if (index < 0) return;
+
+        final msg = _messages[index];
+        final newReactions = msg.reactions
+            .where((r) => !(r.userId == userId && r.emoji == emoji))
+            .toList();
+
+        if (newReactions.length == msg.reactions.length) return;
+
+        _messages[index] = msg.copyWith(reactions: newReactions);
+        notifyListeners();
     }
 
     // =====================================================
@@ -622,24 +693,8 @@ class ChatProvider extends ChangeNotifier {
 
         if (messageId == null || userId == null || emoji == null) return;
 
-        final index = _messages.indexWhere((m) => m.id == messageId);
-        if (index >= 0) {
-            final msg = _messages[index];
-            final newReactions = List<Reaction>.from(msg.reactions);
-
-            final exists = newReactions.any(
-                (r) => r.userId == userId && r.emoji == emoji,
-            );
-            if (!exists) {
-                newReactions.add(Reaction(
-                    emoji: emoji,
-                    userId: userId,
-                    displayName: displayName,
-                ));
-                _messages[index] = msg.copyWith(reactions: newReactions);
-                notifyListeners();
-            }
-        }
+        // Используем helper с защитой от дубликатов
+        _applyReactionLocally(messageId, userId, emoji, displayName);
     }
 
     void _handleReactionRemoved(Map<String, dynamic> data) {
@@ -649,15 +704,8 @@ class ChatProvider extends ChangeNotifier {
 
         if (messageId == null || userId == null || emoji == null) return;
 
-        final index = _messages.indexWhere((m) => m.id == messageId);
-        if (index >= 0) {
-            final msg = _messages[index];
-            final newReactions = msg.reactions
-                .where((r) => !(r.userId == userId && r.emoji == emoji))
-                .toList();
-            _messages[index] = msg.copyWith(reactions: newReactions);
-            notifyListeners();
-        }
+        // Используем helper
+        _removeReactionLocally(messageId, userId, emoji);
     }
 
     // =====================================================
