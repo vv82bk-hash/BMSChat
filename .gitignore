@@ -29,7 +29,7 @@ yarn-error.log*
 pnpm-debug.log*
 .npm
 .yarn
-package-lock.json
+# package-lock.json
 yarn.lock
 
 # -----------------------------------------------------
