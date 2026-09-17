@@ -19,6 +19,11 @@ const logger = require('../utils/logger');
 // =====================================================
 // 📜 GET /api/messages/:chatId
 // =====================================================
+// ОПТИМИЗИРОВАНО: вместо N+1 запросов — 3 запроса.
+//   1. Сообщения
+//   2. Все реакции для этих сообщений
+//   3. Все вложения для этих сообщений
+// =====================================================
 router.get('/:chatId', authMiddleware, async (req, res) => {
     try {
         const chatId = parseInt(req.params.chatId, 10);
@@ -30,6 +35,9 @@ router.get('/:chatId', authMiddleware, async (req, res) => {
             return res.status(403).json({ error: access.reason });
         }
 
+        // ─────────────────────────────────────────
+        // 1️⃣ Сообщения
+        // ─────────────────────────────────────────
         let query = `
             SELECT 
                 m.id, m.chat_id, m.sender_id, m.text, m.reply_to_id,
@@ -51,27 +59,73 @@ router.get('/:chatId', authMiddleware, async (req, res) => {
 
         const result = await pool.query(query, params);
 
-        const messages = await Promise.all(result.rows.map(async (m) => {
-            const reactions = await pool.query(`
-                SELECT r.emoji, r.user_id, u.display_name
-                FROM reactions r
-                INNER JOIN users u ON u.id = r.user_id
-                WHERE r.message_id = $1
-            `, [m.id]);
+        if (result.rows.length === 0) {
+            return res.json({ messages: [], hasMore: false });
+        }
 
-            const attachments = await pool.query(`
-                SELECT id, file_type, file_path, file_name, file_size,
-                       mime_type, duration, width, height
-                FROM attachments
-                WHERE message_id = $1
-            `, [m.id]);
+        // Получаем ID всех сообщений
+        const messageIds = result.rows.map((m) => m.id);
 
-            return {
-                ...m,
-                text: m.is_deleted ? null : m.text,
-                reactions: reactions.rows,
-                attachments: attachments.rows,
-            };
+        // ─────────────────────────────────────────
+        // 2️⃣ Все реакции — ОДНИМ запросом
+        // ─────────────────────────────────────────
+        const reactionsResult = await pool.query(`
+            SELECT r.message_id, r.emoji, r.user_id, u.display_name
+            FROM reactions r
+            INNER JOIN users u ON u.id = r.user_id
+            WHERE r.message_id = ANY($1::int[])
+        `, [messageIds]);
+
+        // Группируем реакции по message_id
+        const reactionsByMessage = {};
+        for (const r of reactionsResult.rows) {
+            if (!reactionsByMessage[r.message_id]) {
+                reactionsByMessage[r.message_id] = [];
+            }
+            reactionsByMessage[r.message_id].push({
+                emoji: r.emoji,
+                user_id: r.user_id,
+                display_name: r.display_name,
+            });
+        }
+
+        // ─────────────────────────────────────────
+        // 3️⃣ Все вложения — ОДНИМ запросом
+        // ─────────────────────────────────────────
+        const attachmentsResult = await pool.query(`
+            SELECT id, message_id, file_type, file_path, file_name,
+                   file_size, mime_type, duration, width, height
+            FROM attachments
+            WHERE message_id = ANY($1::int[])
+        `, [messageIds]);
+
+        // Группируем вложения по message_id
+        const attachmentsByMessage = {};
+        for (const a of attachmentsResult.rows) {
+            if (!attachmentsByMessage[a.message_id]) {
+                attachmentsByMessage[a.message_id] = [];
+            }
+            attachmentsByMessage[a.message_id].push({
+                id: a.id,
+                file_type: a.file_type,
+                file_path: a.file_path,
+                file_name: a.file_name,
+                file_size: a.file_size,
+                mime_type: a.mime_type,
+                duration: a.duration,
+                width: a.width,
+                height: a.height,
+            });
+        }
+
+        // ─────────────────────────────────────────
+        // 4️⃣ Собираем всё вместе
+        // ─────────────────────────────────────────
+        const messages = result.rows.map((m) => ({
+            ...m,
+            text: m.is_deleted ? null : m.text,
+            reactions: reactionsByMessage[m.id] || [],
+            attachments: attachmentsByMessage[m.id] || [],
         }));
 
         // Разворачиваем (от старых к новым)
