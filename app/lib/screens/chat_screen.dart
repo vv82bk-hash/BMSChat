@@ -33,16 +33,17 @@ class _ChatScreenState extends State<ChatScreen> {
     final _imagePicker = ImagePicker();
     bool _isTyping = false;
 
+    /// Флаг: был ли уже автоскролл при открытии
+    bool _initialScrollDone = false;
+
+    /// Предыдущее количество сообщений (для отслеживания новых)
+    int _lastMessageCount = 0;
+
     @override
     void initState() {
         super.initState();
 
-        // 📜 Автоскролл после первой отрисовки
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-            _scrollToBottom(jump: true);
-        });
-
-        // 📜 Слушаем изменения сообщений — скроллим при новых
+        // 📜 Слушаем изменения ChatProvider
         WidgetsBinding.instance.addPostFrameCallback((_) {
             final chat = Provider.of<ChatProvider>(context, listen: false);
             chat.addListener(_onChatChanged);
@@ -58,12 +59,37 @@ class _ChatScreenState extends State<ChatScreen> {
         super.dispose();
     }
 
+    // ============================================
+    // 📜 ОТСЛЕЖИВАНИЕ ИЗМЕНЕНИЙ ЧАТА
+    // ============================================
     void _onChatChanged() {
-        // Если пришло новое сообщение — скроллим вниз
         if (!mounted) return;
-        if (_scrollController.hasClients) {
-            final position = _scrollController.position;
-            final isNearBottom = position.pixels >= position.maxScrollExtent - 200;
+
+        final chat = Provider.of<ChatProvider>(context, listen: false);
+
+        // 1️⃣ Первый скролл после загрузки сообщений
+        if (!_initialScrollDone &&
+            !chat.isLoadingMessages &&
+            chat.messages.isNotEmpty) {
+            _initialScrollDone = true;
+            _lastMessageCount = chat.messages.length;
+
+            // Ждём отрисовку списка
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+                _scrollToBottom(jump: true);
+            });
+            return;
+        }
+
+        // 2️⃣ Новое сообщение — скроллим, если были у низа
+        if (chat.messages.length > _lastMessageCount) {
+            final position = _scrollController.hasClients
+                ? _scrollController.position
+                : null;
+            final isNearBottom = position == null ||
+                position.pixels >= position.maxScrollExtent - 300;
+
+            _lastMessageCount = chat.messages.length;
 
             if (isNearBottom) {
                 _scrollToBottom();
@@ -292,7 +318,6 @@ class _ChatScreenState extends State<ChatScreen> {
     // 📊 ПОДЗАГОЛОВОК APPBAR
     // ============================================
     Widget _buildSubtitle(ChatProvider chat) {
-        // 👑 Если кто-то печатает — показываем ЭТО
         if (chat.hasTypingUsers) {
             return AnimatedSwitcher(
                 duration: const Duration(milliseconds: 200),

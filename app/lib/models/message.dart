@@ -144,22 +144,51 @@ class Message {
     /// Текст, безопасный для отображения
     String get displayText {
         if (isDeleted) return 'Сообщение удалено';
+        // Если это файл — не показываем путь
+        if (isFileMessage) return '';
         return text ?? '';
     }
 
     // =====================================================
     // 📎 ОПРЕДЕЛЕНИЕ ТИПА ФАЙЛА
     // =====================================================
+    // Формат: "IMG:/api/files/abc123" или "VOICE:/uploads/voice.mp3"
+    // =====================================================
+
+    /// Префикс типа файла (если есть)
+    String? get _filePrefix {
+        if (text == null || text!.isEmpty) return null;
+        if (text!.startsWith('IMG:')) return 'IMG:';
+        if (text!.startsWith('VOICE:')) return 'VOICE:';
+        if (text!.startsWith('FILE:')) return 'FILE:';
+        return null;
+    }
 
     /// Путь к файлу в тексте сообщения (если есть)
+    /// Возвращает путь БЕЗ префикса.
     String? get filePath {
         if (text == null || text!.isEmpty) return null;
-        if (!text!.startsWith('/uploads/')) return null;
-        return text!;
+
+        // Новый формат с префиксом: IMG:, VOICE:, FILE:
+        final prefix = _filePrefix;
+        if (prefix != null) {
+            return text!.substring(prefix.length);
+        }
+
+        // Старый формат: /uploads/... или /api/files/...
+        if (text!.startsWith('/uploads/') ||
+            text!.startsWith('/api/files/')) {
+            return text!;
+        }
+
+        return null;
     }
 
     /// Есть ли в сообщении картинка?
     bool get isImageMessage {
+        // Приоритет — префикс IMG:
+        if (_filePrefix == 'IMG:') return true;
+
         final path = filePath;
         if (path == null) return false;
 
@@ -173,6 +202,9 @@ class Message {
 
     /// Есть ли в сообщении голосовое?
     bool get isVoiceMessage {
+        // Приоритет — префикс VOICE:
+        if (_filePrefix == 'VOICE:') return true;
+
         final path = filePath;
         if (path == null) return false;
 

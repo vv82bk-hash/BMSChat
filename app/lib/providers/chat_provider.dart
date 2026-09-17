@@ -1,3 +1,7 @@
+// =====================================================
+// 💬 BMSChat — ПРОВАЙДЕР ЧАТОВ
+// =====================================================
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -312,6 +316,15 @@ class ChatProvider extends ChangeNotifier {
     // 📤 ЗАГРУЗКА ФАЙЛОВ
     // =====================================================
 
+    /// Отправить файл в текущий чат.
+    /// 
+    /// [localPath] — локальный путь к файлу
+    /// [type] — 'image' | 'voice' | 'file'
+    /// 
+    /// ВАЖНО: тип файла передаётся через префикс в тексте:
+    ///   IMG:/api/files/... — картинка
+    ///   VOICE:/api/files/... — голосовое
+    ///   FILE:/api/files/... — обычный файл
     Future<bool> sendFile(String localPath, String type) async {
         if (_activeChat == null) {
             AppLogger.warn('Нет активного чата');
@@ -330,6 +343,7 @@ class ChatProvider extends ChangeNotifier {
         try {
             AppLogger.info('📤 Загрузка файла: $type');
 
+            // 1. Загружаем файл на сервер
             final uploadResponse = await ApiService.uploadFile(localPath, type);
 
             if (!uploadResponse.isSuccess || uploadResponse.data == null) {
@@ -341,12 +355,29 @@ class ChatProvider extends ChangeNotifier {
 
             final fileData = uploadResponse.data!;
             final uploadedPath = fileData['file_path'] as String;
+            final fileType = fileData['file_type'] as String? ?? type;
 
-            AppLogger.success('Файл загружен: $uploadedPath');
+            AppLogger.success('Файл загружен: $uploadedPath (тип: $fileType)');
 
+            // 2. Формируем текст с префиксом типа
+            String prefix;
+            switch (fileType) {
+                case 'image':
+                    prefix = 'IMG:';
+                    break;
+                case 'voice':
+                    prefix = 'VOICE:';
+                    break;
+                default:
+                    prefix = 'FILE:';
+            }
+
+            final textWithPrefix = '$prefix$uploadedPath';
+
+            // 3. Отправляем сообщение
             SocketService.sendMessage(
                 chatId: _activeChat!.id,
-                text: uploadedPath,
+                text: textWithPrefix,
                 tempId: DateTime.now().millisecondsSinceEpoch,
             );
 
@@ -693,7 +724,6 @@ class ChatProvider extends ChangeNotifier {
 
         if (messageId == null || userId == null || emoji == null) return;
 
-        // Используем helper с защитой от дубликатов
         _applyReactionLocally(messageId, userId, emoji, displayName);
     }
 
@@ -704,7 +734,6 @@ class ChatProvider extends ChangeNotifier {
 
         if (messageId == null || userId == null || emoji == null) return;
 
-        // Используем helper
         _removeReactionLocally(messageId, userId, emoji);
     }
 

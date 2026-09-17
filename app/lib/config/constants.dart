@@ -195,14 +195,14 @@ class ApiEndpoints {
     static String markRead(int chatId) => '/chats/$chatId/read';
 
     // ─────────────────────────────────────────
-    // 📝 СООБЩЕНИЯ
+    // 📝 СООБЩЕНИЯ (ИСПРАВЛЕНО)
     // ─────────────────────────────────────────
     static String messages(int chatId) => '/messages/$chatId';
-    static String message(int messageId) => '/messages/id/$messageId';
+    static String message(int messageId) => '/messages/$messageId';
     static String messageReactions(int messageId) =>
-        '/messages/id/$messageId/reactions';
+        '/messages/$messageId/reactions';
     static String removeReaction(int messageId, String emoji) =>
-        '/messages/id/$messageId/reactions/$emoji';
+        '/messages/$messageId/reactions/$emoji';
 
     // ─────────────────────────────────────────
     // 📤 ЗАГРУЗКА
@@ -242,79 +242,34 @@ class StorageKeys {
 // =====================================================
 // 🔌 СОБЫТИЯ SOCKET.IO
 // =====================================================
-// Имена событий ДОЛЖНЫ совпадать с сервером
-// (server/socket/handlers.js)
-// =====================================================
 
 class SocketEvents {
-    // ─────────────────────────────────────────
     // 📥 ВХОДЯЩИЕ (сервер → клиент)
-    // ─────────────────────────────────────────
-
-    /// Новое сообщение
     static const String newMessage = 'new_message';
-
-    /// Кто-то печатает
     static const String userTyping = 'user_typing';
-
-    /// Перестал печатать
     static const String userStoppedTyping = 'user_stopped_typing';
-
-    /// Пользователь онлайн
     static const String userOnline = 'user_online';
-
-    /// Пользователь офлайн
     static const String userOffline = 'user_offline';
-
-    /// Сообщение прочитано
     static const String messageRead = 'message_read';
-
-    /// Количество онлайн
     static const String onlineCount = 'online_count';
-
-    /// Присоединился к чатам (подтверждение)
     static const String joinedChats = 'joined_chats';
-
-    /// Ошибка от сервера
     static const String error = 'error';
 
-    // ─────────────────────────────────────────
     // 📥 ЗАПЛАНИРОВАННЫЕ
-    // ─────────────────────────────────────────
     static const String messageEdited = 'message_edited';
     static const String messageDeleted = 'message_deleted';
     static const String reactionAdded = 'reaction_added';
     static const String reactionRemoved = 'reaction_removed';
 
-    // ─────────────────────────────────────────
-    // 👑 ЗАЯВКИ (для командиров/админов)
-    // ─────────────────────────────────────────
-
-    /// Новый новобранец зарегистрировался
+    // 👑 ЗАЯВКИ
     static const String newRecruit = 'new_recruit';
-
-    /// Количество неподтверждённых
     static const String pendingCount = 'pending_count';
 
-    // ─────────────────────────────────────────
     // 📤 ИСХОДЯЩИЕ (клиент → сервер)
-    // ─────────────────────────────────────────
-
-    /// Присоединиться ко всем чатам
     static const String joinChats = 'join_chats';
-
-    /// Подписаться на канал заявок
     static const String joinAdmins = 'join_admins';
-
-    /// Отправить «печатает...»
     static const String typing = 'typing';
-
-    /// Отправить «перестал печатать»
     static const String stopTyping = 'stop_typing';
-
-    /// Отправить сообщение через Socket.IO
     static const String sendMessage = 'send_message';
-
-    /// Отметить чат как прочитанный
     static const String markRead = 'mark_read';
 }

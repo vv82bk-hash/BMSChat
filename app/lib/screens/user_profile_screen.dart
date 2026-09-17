@@ -515,7 +515,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             }
 
             final chatData = response.data!;
-            final chatId = chatData['chat']?['id'] ?? chatData['id'];
+            // Сервер возвращает { chat_id: ..., existed: ... }
+            final chatId = chatData['chat_id'] ??
+                chatData['chat']?['id'] ??
+                chatData['id'];
 
             if (chatId == null) {
                 _showSnack('Ошибка: нет ID чата', isError: true);
