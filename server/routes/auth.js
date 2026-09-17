@@ -12,6 +12,7 @@ const { hashPassword, verifyPassword, validatePasswordStrength } = require('../u
 const { generateToken } = require('../utils/jwt');
 const { authMiddleware } = require('../middleware/auth');
 const { getMergedPermissions, getUserRoles } = require('../middleware/roles');
+const { notifyAdminsNewRecruit } = require('../socket/handlers');
 const logger = require('../utils/logger');
 
 // =====================================================
@@ -89,12 +90,21 @@ router.post('/register', registerLimiter, async (req, res) => {
         const result = await pool.query(`
             INSERT INTO users (username, password, display_name, is_approved)
             VALUES ($1, $2, $3, FALSE)
-            RETURNING id
+            RETURNING id, username, display_name, created_at
         `, [username, passwordHash, display_name || username]);
 
-        const userId = result.rows[0].id;
+        const newUser = result.rows[0];
+        const userId = newUser.id;
 
         logger.success('Новый пользователь зарегистрирован', { userId, username });
+
+        // 🔔 Уведомляем командиров и админов о новом новобранце
+        const io = req.app.get('io');
+        if (io) {
+            await notifyAdminsNewRecruit(io, newUser);
+        } else {
+            logger.warn('io не найден в req.app — уведомление не отправлено');
+        }
 
         res.status(201).json({
             message: 'Регистрация успешна! Ожидайте подтверждения командира.',

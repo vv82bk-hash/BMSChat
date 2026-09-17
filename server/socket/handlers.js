@@ -30,6 +30,11 @@ function registerHandlers(io) {
             handleJoinChats(socket, userId);
         });
 
+        // 👑 Подписка на канал заявок (только для тех, у кого есть право)
+        socket.on('join_admins', () => {
+            handleJoinAdmins(socket, user);
+        });
+
         socket.on('typing', (data) => {
             handleTyping(io, socket, user, data);
         });
@@ -50,6 +55,76 @@ function registerHandlers(io) {
             handleDisconnect(io, socket, user);
         });
     });
+}
+
+// =====================================================
+// 👑 ПОДПИСКА НА КАНАЛ ЗАЯВОК
+// =====================================================
+async function handleJoinAdmins(socket, user) {
+    try {
+        // Проверяем, есть ли у пользователя право подтверждать
+        const result = await pool.query(`
+            SELECT 1
+            FROM user_roles ur
+            INNER JOIN roles r ON r.id = ur.role_id
+            WHERE ur.user_id = $1 AND r.can_approve_users = TRUE
+            LIMIT 1
+        `, [user.id]);
+
+        if (result.rows.length === 0) {
+            logger.warn('Нет права на канал заявок', { userId: user.id });
+            return;
+        }
+
+        socket.join('admins');
+        logger.info('Подписан на канал заявок', {
+            userId: user.id,
+            displayName: user.display_name,
+        });
+
+        // Отправляем количество текущих заявок
+        const pending = await pool.query(
+            'SELECT COUNT(*) as cnt FROM users WHERE is_approved = FALSE'
+        );
+        socket.emit('pending_count', {
+            count: parseInt(pending.rows[0].cnt, 10),
+        });
+    } catch (error) {
+        logger.error('Ошибка join_admins', error);
+    }
+}
+
+// =====================================================
+// 🔔 УВЕДОМЛЕНИЕ О НОВОМ НОВОБРАНЦЕ
+// =====================================================
+// Экспортируем — чтобы вызывать из роутов (auth.js)
+// =====================================================
+async function notifyAdminsNewRecruit(io, newUser) {
+    try {
+        const pending = await pool.query(
+            'SELECT COUNT(*) as cnt FROM users WHERE is_approved = FALSE'
+        );
+        const count = parseInt(pending.rows[0].cnt, 10);
+
+        io.to('admins').emit('new_recruit', {
+            user: {
+                id: newUser.id,
+                username: newUser.username,
+                display_name: newUser.display_name,
+                created_at: newUser.created_at,
+            },
+            pendingCount: count,
+        });
+
+        io.to('admins').emit('pending_count', { count });
+
+        logger.info('Уведомление о новом новобранце отправлено', {
+            newUserId: newUser.id,
+            pendingCount: count,
+        });
+    } catch (error) {
+        logger.error('Ошибка notifyAdminsNewRecruit', error);
+    }
 }
 
 // =====================================================
@@ -316,5 +391,6 @@ async function handleDisconnect(io, socket, user) {
 // =====================================================
 module.exports = {
     registerHandlers,
+    notifyAdminsNewRecruit,
     onlineUsers,
 };
