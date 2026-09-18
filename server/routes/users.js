@@ -85,6 +85,51 @@ async function clearUserRoles(userId) {
     await pool.query('DELETE FROM user_roles WHERE user_id = $1', [userId]);
 }
 
+/**
+ * Проверяет, является ли пользователь администратором
+ */
+async function isUserAdmin(userId) {
+    const result = await pool.query(`
+        SELECT 1 FROM user_roles ur
+        INNER JOIN roles r ON r.id = ur.role_id
+        WHERE ur.user_id = $1 AND r.name = 'Администратор'
+        LIMIT 1
+    `, [userId]);
+    return result.rows.length > 0;
+}
+
+/**
+ * Проверяет, может ли actor управлять target.
+ * 
+ * Правило:
+ *   - Нельзя управлять учётной записью администратора,
+ *     если ты сам — не этот администратор.
+ * 
+ * @param {number} actorId — ID того, кто выполняет действие
+ * @param {number} targetId — ID того, над кем действие
+ * @returns {Promise<{allowed: boolean, reason?: string}>}
+ */
+async function canManageTarget(actorId, targetId) {
+    // Если actor и target — один и тот же человек — разрешаем
+    if (actorId === targetId) return { allowed: true };
+
+    // Проверяем, является ли target администратором
+    const targetIsAdmin = await isUserAdmin(targetId);
+
+    if (!targetIsAdmin) {
+        // target — не админ → можно управлять
+        return { allowed: true };
+    }
+
+    // target — админ. Разрешаем только если actor сам является этим админом
+    // (т.е. actorId === targetId — уже проверено выше)
+    // Значит, если actor !== target и target — админ → запрещено
+    return {
+        allowed: false,
+        reason: 'Нельзя управлять учётной записью администратора',
+    };
+}
+
 // =====================================================
 // 👥 GET /api/users
 // =====================================================
@@ -327,6 +372,12 @@ router.post(
         try {
             const userId = parseInt(req.params.id, 10);
 
+            // 🔒 ЗАЩИТА: нельзя управлять администратором
+            const check = await canManageTarget(req.user.id, userId);
+            if (!check.allowed) {
+                return res.status(403).json({ error: check.reason });
+            }
+
             const userResult = await pool.query(`
                 SELECT id, username, display_name, is_approved 
                 FROM users WHERE id = $1
@@ -384,6 +435,12 @@ router.post(
     async (req, res) => {
         try {
             const userId = parseInt(req.params.id, 10);
+
+            // 🔒 ЗАЩИТА: нельзя управлять администратором
+            const check = await canManageTarget(req.user.id, userId);
+            if (!check.allowed) {
+                return res.status(403).json({ error: check.reason });
+            }
 
             const userResult = await pool.query(
                 'SELECT id, display_name FROM users WHERE id = $1',
@@ -444,6 +501,12 @@ router.post(
         try {
             const userId = parseInt(req.params.id, 10);
 
+            // 🔒 ЗАЩИТА: нельзя управлять администратором
+            const check = await canManageTarget(req.user.id, userId);
+            if (!check.allowed) {
+                return res.status(403).json({ error: check.reason });
+            }
+
             const userResult = await pool.query(
                 'SELECT id, display_name FROM users WHERE id = $1',
                 [userId]
@@ -486,6 +549,12 @@ router.post(
 
             if (!roleName) {
                 return res.status(400).json({ error: 'roleName обязателен' });
+            }
+
+            // 🔒 ЗАЩИТА: нельзя управлять администратором
+            const check = await canManageTarget(req.user.id, userId);
+            if (!check.allowed) {
+                return res.status(403).json({ error: check.reason });
             }
 
             const userResult = await pool.query(
@@ -537,6 +606,12 @@ router.post(
             const userId = parseInt(req.params.id, 10);
             const roleId = parseInt(req.params.roleId, 10);
 
+            // 🔒 ЗАЩИТА: нельзя управлять администратором
+            const check = await canManageTarget(req.user.id, userId);
+            if (!check.allowed) {
+                return res.status(403).json({ error: check.reason });
+            }
+
             const userResult = await pool.query(
                 'SELECT id FROM users WHERE id = $1',
                 [userId]
@@ -580,6 +655,12 @@ router.delete(
         try {
             const userId = parseInt(req.params.id, 10);
             const roleId = parseInt(req.params.roleId, 10);
+
+            // 🔒 ЗАЩИТА: нельзя управлять администратором
+            const check = await canManageTarget(req.user.id, userId);
+            if (!check.allowed) {
+                return res.status(403).json({ error: check.reason });
+            }
 
             const roleResult = await pool.query(
                 'SELECT id, name, is_system FROM roles WHERE id = $1',
