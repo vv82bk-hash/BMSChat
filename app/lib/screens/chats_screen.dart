@@ -1,5 +1,5 @@
 // =====================================================
-// 💬 BMSChat — ЭКРАН СПИСКА ЧАТОВ
+// 💬 BMSChat — ЭКРАН СПИСКА ЧАТОВ (С НЕПРОЧИТАННЫМИ)
 // =====================================================
 
 import 'package:flutter/material.dart';
@@ -48,7 +48,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
     }
 
     // ============================================
-    // 📂 ОТКРЫТИЕ ЧАТА С АНИМАЦИЕЙ (снизу вверх)
+    // 📂 ОТКРЫТИЕ ЧАТА
     // ============================================
     Future<void> _openChat(Chat chat) async {
         AppLogger.info('📂 Открытие: ${chat.title}');
@@ -69,7 +69,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
 
                     return SlideTransition(
                         position: Tween<Offset>(
-                            begin: const Offset(0, 1), // снизу
+                            begin: const Offset(0, 1),
                             end: Offset.zero,
                         ).animate(curvedAnimation),
                         child: FadeTransition(
@@ -152,16 +152,21 @@ class _ChatsScreenState extends State<ChatsScreen> {
             appBar: AppBar(
                 title: const Row(
                     children: [
-                        Text('🎯', style: TextStyle(fontSize: 24)),
-                        SizedBox(width: 8),
-                        Text('Чаты'),
+                        Text('🎯', style: TextStyle(fontSize: 28)),
+                        SizedBox(width: 10),
+                        Text(
+                            'Чаты',
+                            style: TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.w700,
+                            ),
+                        ),
                     ],
                 ),
                 actions: [
-                    // 👥 Участники с бейджем заявок
                     _buildUsersButton(),
                     IconButton(
-                        icon: const Icon(Icons.person_outline),
+                        icon: const Icon(Icons.person_outline, size: 26),
                         onPressed: () {
                             Navigator.push(
                                 context,
@@ -173,7 +178,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
                         tooltip: 'Профиль',
                     ),
                     IconButton(
-                        icon: const Icon(Icons.logout),
+                        icon: const Icon(Icons.logout, size: 26),
                         onPressed: _logout,
                         tooltip: 'Выйти',
                     ),
@@ -196,6 +201,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
                                         'Загрузка чатов...',
                                         style: TextStyle(
                                             color: RastaTheme.textMuted,
+                                            fontSize: 16,
                                         ),
                                     ),
                                 ],
@@ -211,17 +217,58 @@ class _ChatsScreenState extends State<ChatsScreen> {
                         return _buildEmptyState();
                     }
 
-                    return RefreshIndicator(
-                        onRefresh: _onRefresh,
-                        color: RastaTheme.rastaYellow,
-                        backgroundColor: RastaTheme.surface,
-                        child: ListView.builder(
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                            itemCount: chat.chats.length,
-                            itemBuilder: (context, index) {
-                                return _buildChatTile(chat.chats[index], chat);
-                            },
-                        ),
+                    return Stack(
+                        children: [
+                            // ─────────────────────────────
+                            // СПИСОК ЧАТОВ
+                            // ─────────────────────────────
+                            RefreshIndicator(
+                                onRefresh: _onRefresh,
+                                color: RastaTheme.rastaYellow,
+                                backgroundColor: RastaTheme.surface,
+                                child: ListView.builder(
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 8,
+                                    ),
+                                    itemCount: chat.chats.length,
+                                    itemBuilder: (context, index) {
+                                        return _buildChatTile(
+                                            chat.chats[index],
+                                            chat,
+                                        );
+                                    },
+                                ),
+                            ),
+
+                            // ─────────────────────────────
+                            // ЛОГОТИП СНИЗУ (ярче в 2 раза)
+                            // ─────────────────────────────
+                            Positioned(
+                                bottom: -40,
+                                left: 0,
+                                right: 0,
+                                child: IgnorePointer(
+                                    child: Center(
+                                        child: Opacity(
+                                            opacity: 0.16,   // ← было 0.08
+                                            child: ClipOval(
+                                                child: Image.asset(
+                                                    'assets/images/logo.png',
+                                                    width: 320,
+                                                    height: 320,
+                                                    fit: BoxFit.cover,
+                                                    errorBuilder: (context,
+                                                        error, stackTrace) {
+                                                        return const SizedBox
+                                                            .shrink();
+                                                    },
+                                                ),
+                                            ),
+                                        ),
+                                    ),
+                                ),
+                            ),
+                        ],
                     );
                 },
             ),
@@ -229,7 +276,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
     }
 
     // ============================================
-    // 👥 КНОПКА «УЧАСТНИКИ» С БЕЙДЖЕМ ЗАЯВОК
+    // 👥 КНОПКА «УЧАСТНИКИ» С БЕЙДЖЕМ
     // ============================================
     Widget _buildUsersButton() {
         final users = Provider.of<UsersProvider>(context);
@@ -239,7 +286,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
         return Stack(
             children: [
                 IconButton(
-                    icon: const Icon(Icons.people_outline),
+                    icon: const Icon(Icons.people_outline, size: 26),
                     tooltip: 'Участники',
                     onPressed: _openUsers,
                 ),
@@ -249,7 +296,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
                         top: 6,
                         child: Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 5,
+                                horizontal: 6,
                                 vertical: 2,
                             ),
                             decoration: BoxDecoration(
@@ -257,13 +304,13 @@ class _ChatsScreenState extends State<ChatsScreen> {
                                 borderRadius: BorderRadius.circular(10),
                             ),
                             constraints: const BoxConstraints(
-                                minWidth: 18,
-                                minHeight: 18,
+                                minWidth: 20,
+                                minHeight: 20,
                             ),
                             child: Text(
                                 count > 99 ? '99+' : '$count',
                                 style: const TextStyle(
-                                    fontSize: 10,
+                                    fontSize: 11,
                                     fontWeight: FontWeight.bold,
                                     color: Colors.white,
                                 ),
@@ -281,23 +328,37 @@ class _ChatsScreenState extends State<ChatsScreen> {
     Widget _buildChatTile(Chat chat, ChatProvider provider) {
         final onlineInfo = _getOnlineInfo(chat, provider);
 
+        final hasUnread = provider.getUnreadCount(chat) > 0;
+        final unreadCount = provider.getUnreadCount(chat);
+
         return InkWell(
             onTap: () => _openChat(chat),
             child: Container(
                 padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
+                    horizontal: 18,
+                    vertical: 14,
                 ),
                 child: Row(
                     children: [
+                        // ─────────────────────────────
+                        // АВАТАРКА 68×68
+                        // ─────────────────────────────
                         Stack(
                             children: [
                                 Container(
-                                    width: 56,
-                                    height: 56,
+                                    width: 68,
+                                    height: 68,
                                     decoration: BoxDecoration(
                                         shape: BoxShape.circle,
                                         gradient: _getChatGradient(chat.type),
+                                        boxShadow: [
+                                            BoxShadow(
+                                                color: Colors.black
+                                                    .withValues(alpha: 0.3),
+                                                blurRadius: 8,
+                                                offset: const Offset(0, 3),
+                                            ),
+                                        ],
                                     ),
                                     child: Center(
                                         child: _buildChatIcon(chat),
@@ -308,16 +369,17 @@ class _ChatsScreenState extends State<ChatsScreen> {
                                         right: 2,
                                         bottom: 2,
                                         child: Container(
-                                            width: 14,
-                                            height: 14,
+                                            width: 18,
+                                            height: 18,
                                             decoration: BoxDecoration(
                                                 shape: BoxShape.circle,
                                                 color: onlineInfo.isOnline
                                                     ? RastaTheme.online
                                                     : RastaTheme.offline,
                                                 border: Border.all(
-                                                    color: RastaTheme.background,
-                                                    width: 2,
+                                                    color:
+                                                        RastaTheme.background,
+                                                    width: 2.5,
                                                 ),
                                             ),
                                         ),
@@ -325,8 +387,11 @@ class _ChatsScreenState extends State<ChatsScreen> {
                             ],
                         ),
 
-                        const SizedBox(width: 12),
+                        const SizedBox(width: 14),
 
+                        // ─────────────────────────────
+                        // ТЕКСТ
+                        // ─────────────────────────────
                         Expanded(
                             child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -336,37 +401,57 @@ class _ChatsScreenState extends State<ChatsScreen> {
                                             Expanded(
                                                 child: Text(
                                                     chat.title,
-                                                    style: const TextStyle(
-                                                        fontSize: 16,
-                                                        fontWeight: FontWeight.w600,
-                                                        color: RastaTheme.textPrimary,
+                                                    style: TextStyle(
+                                                        fontSize: 19,
+                                                        fontWeight: hasUnread
+                                                            ? FontWeight.w700
+                                                            : FontWeight.w600,
+                                                        color: RastaTheme
+                                                            .textPrimary,
                                                     ),
                                                     maxLines: 1,
-                                                    overflow: TextOverflow.ellipsis,
+                                                    overflow: TextOverflow
+                                                        .ellipsis,
                                                 ),
                                             ),
-                                            if (chat.lastMessageTime.isNotEmpty)
+                                            if (chat.lastMessageTime
+                                                .isNotEmpty)
                                                 Text(
                                                     chat.lastMessageTime,
-                                                    style: const TextStyle(
-                                                        fontSize: 12,
-                                                        color: RastaTheme.textMuted,
+                                                    style: TextStyle(
+                                                        fontSize: 13,
+                                                        color: hasUnread
+                                                            ? RastaTheme
+                                                                .rastaYellow
+                                                            : RastaTheme
+                                                                .textMuted,
+                                                        fontWeight: hasUnread
+                                                            ? FontWeight.w700
+                                                            : FontWeight.w500,
                                                     ),
                                                 ),
                                         ],
                                     ),
-                                    const SizedBox(height: 4),
+                                    const SizedBox(height: 5),
                                     Row(
                                         children: [
                                             Expanded(
                                                 child: Text(
                                                     chat.lastMessagePreview,
-                                                    style: const TextStyle(
-                                                        fontSize: 14,
-                                                        color: RastaTheme.textSecondary,
+                                                    style: TextStyle(
+                                                        fontSize: 16,
+                                                        color: hasUnread
+                                                            ? RastaTheme
+                                                                .textPrimary
+                                                            : RastaTheme
+                                                                .textSecondary,
+                                                        fontWeight: hasUnread
+                                                            ? FontWeight.w600
+                                                            : FontWeight.w400,
                                                     ),
                                                     maxLines: 1,
-                                                    overflow: TextOverflow.ellipsis,
+                                                    overflow: TextOverflow
+                                                        .ellipsis,
                                                 ),
                                             ),
                                             if (onlineInfo.text != null) ...[
@@ -374,11 +459,14 @@ class _ChatsScreenState extends State<ChatsScreen> {
                                                 Text(
                                                     onlineInfo.text!,
                                                     style: TextStyle(
-                                                        fontSize: 12,
-                                                        color: onlineInfo.isOnline
+                                                        fontSize: 13,
+                                                        color: onlineInfo
+                                                                .isOnline
                                                             ? RastaTheme.online
-                                                            : RastaTheme.textMuted,
-                                                        fontWeight: FontWeight.w600,
+                                                            : RastaTheme
+                                                                .textMuted,
+                                                        fontWeight:
+                                                            FontWeight.w600,
                                                     ),
                                                 ),
                                             ],
@@ -388,15 +476,50 @@ class _ChatsScreenState extends State<ChatsScreen> {
                             ),
                         ),
 
-                        if (chat.isAdmin)
-                            const Padding(
-                                padding: EdgeInsets.only(left: 8),
-                                child: Icon(
-                                    Icons.star,
-                                    size: 16,
+                        // ─────────────────────────────
+                        // БЕЙДЖ НЕПРОЧИТАННЫХ
+                        // ─────────────────────────────
+                        if (hasUnread) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
                                     color: RastaTheme.rastaYellow,
+                                    borderRadius: BorderRadius.circular(12),
+                                    boxShadow: [
+                                        BoxShadow(
+                                            color: RastaTheme.rastaYellow
+                                                .withValues(alpha: 0.5),
+                                            blurRadius: 8,
+                                            spreadRadius: 1,
+                                        ),
+                                    ],
+                                ),
+                                constraints: const BoxConstraints(
+                                    minWidth: 26,
+                                    minHeight: 26,
+                                ),
+                                child: Text(
+                                    unreadCount > 99 ? '99+' : '$unreadCount',
+                                    style: const TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.black,
+                                    ),
+                                    textAlign: TextAlign.center,
                                 ),
                             ),
+                        ] else if (chat.isAdmin) ...[
+                            const SizedBox(width: 8),
+                            const Icon(
+                                Icons.star,
+                                size: 18,
+                                color: RastaTheme.rastaYellow,
+                            ),
+                        ],
                     ],
                 ),
             ),
@@ -407,29 +530,26 @@ class _ChatsScreenState extends State<ChatsScreen> {
     // 🎨 ИКОНКА ЧАТА (логотип или эмодзи)
     // ============================================
     Widget _buildChatIcon(Chat chat) {
-        // Общий чат → логотип отряда
         if (chat.useLogoImage) {
             return ClipOval(
                 child: Image.asset(
                     'assets/images/logo.png',
-                    width: 56,
-                    height: 56,
+                    width: 68,
+                    height: 68,
                     fit: BoxFit.cover,
                     errorBuilder: (context, error, stackTrace) {
-                        // Фолбэк — эмодзи, если картинка не найдена
                         return Text(
                             chat.icon,
-                            style: const TextStyle(fontSize: 28),
+                            style: const TextStyle(fontSize: 34),
                         );
                     },
                 ),
             );
         }
 
-        // Остальные — эмодзи
         return Text(
             chat.icon,
-            style: const TextStyle(fontSize: 28),
+            style: const TextStyle(fontSize: 34),
         );
     }
 
@@ -477,26 +597,45 @@ class _ChatsScreenState extends State<ChatsScreen> {
         }
     }
 
+    // =====================================================
+    // 📭 ПУСТО (с логотипом)
+    // =====================================================
     Widget _buildEmptyState() {
         return Center(
             child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                    const Text('📭', style: TextStyle(fontSize: 64)),
-                    const SizedBox(height: 16),
+                    Opacity(
+                        opacity: 0.15,
+                        child: ClipOval(
+                            child: Image.asset(
+                                'assets/images/logo.png',
+                                width: 180,
+                                height: 180,
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) {
+                                    return const Text(
+                                        '📭',
+                                        style: TextStyle(fontSize: 96),
+                                    );
+                                },
+                            ),
+                        ),
+                    ),
+                    const SizedBox(height: 24),
                     const Text(
                         'Нет чатов',
                         style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w600,
+                            fontSize: 24,
+                            fontWeight: FontWeight.w700,
                             color: RastaTheme.textPrimary,
                         ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 10),
                     Text(
                         'Начните общение с командой',
                         style: TextStyle(
-                            fontSize: 14,
+                            fontSize: 16,
                             color: RastaTheme.textMuted.withValues(alpha: 0.8),
                         ),
                     ),
@@ -514,14 +653,14 @@ class _ChatsScreenState extends State<ChatsScreen> {
                     children: [
                         const Icon(
                             Icons.error_outline,
-                            size: 64,
+                            size: 72,
                             color: RastaTheme.error,
                         ),
                         const SizedBox(height: 16),
                         const Text(
                             'Ошибка загрузки',
                             style: TextStyle(
-                                fontSize: 20,
+                                fontSize: 22,
                                 fontWeight: FontWeight.w600,
                                 color: RastaTheme.textPrimary,
                             ),
@@ -530,7 +669,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
                         Text(
                             error,
                             style: const TextStyle(
-                                fontSize: 14,
+                                fontSize: 15,
                                 color: RastaTheme.textMuted,
                             ),
                             textAlign: TextAlign.center,

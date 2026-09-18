@@ -1,8 +1,6 @@
 // =====================================================
 // 🌐 BMSChat — СЕРВИС API
 // =====================================================
-// Единая точка для HTTP-запросов к серверу.
-// =====================================================
 
 import 'dart:async';
 import 'dart:convert';
@@ -48,6 +46,23 @@ class ApiResponse<T> {
             statusCode: statusCode,
         );
     }
+}
+
+// =====================================================
+// 📦 РЕЗУЛЬТАТ ЗАГРУЗКИ СООБЩЕНИЙ
+// =====================================================
+class MessagesResponse {
+    final List<Message> messages;
+    final bool hasMore;
+    final int maxReadId;
+    final int myLastReadId;
+
+    const MessagesResponse({
+        required this.messages,
+        this.hasMore = false,
+        this.maxReadId = 0,
+        this.myLastReadId = 0,
+    });
 }
 
 // =====================================================
@@ -266,7 +281,6 @@ class ApiService {
     // 👥 ПОЛЬЗОВАТЕЛИ
     // =====================================================
 
-    /// Получить всех пользователей
     static Future<ApiResponse<List<User>>> getUsers() async {
         final response = await _get(ApiEndpoints.users);
 
@@ -281,7 +295,6 @@ class ApiService {
         return ApiResponse.error(response.error!, statusCode: response.statusCode);
     }
 
-    /// Получить одного пользователя по ID
     static Future<ApiResponse<User>> getUser(int userId) async {
         final response = await _get(ApiEndpoints.user(userId));
 
@@ -293,8 +306,6 @@ class ApiService {
         return ApiResponse.error(response.error!, statusCode: response.statusCode);
     }
 
-    /// Неподтверждённые пользователи
-    /// ⚠️ Сервер возвращает { pending: [...] }, а не { users: [...] }
     static Future<ApiResponse<List<User>>> getPendingUsers() async {
         final response = await _get(ApiEndpoints.pendingUsers);
 
@@ -309,7 +320,6 @@ class ApiService {
         return ApiResponse.error(response.error!, statusCode: response.statusCode);
     }
 
-    /// Подтвердить пользователя (доступно админу и командиру)
     static Future<ApiResponse<void>> approveUser(int userId) async {
         final response = await _post(ApiEndpoints.approveUser(userId));
 
@@ -319,7 +329,6 @@ class ApiService {
         return ApiResponse.error(response.error!, statusCode: response.statusCode);
     }
 
-    /// Отклонить заявку (только админ)
     static Future<ApiResponse<void>> rejectUser(int userId) async {
         final response = await _post(ApiEndpoints.rejectUser(userId));
 
@@ -329,7 +338,6 @@ class ApiService {
         return ApiResponse.error(response.error!, statusCode: response.statusCode);
     }
 
-    /// Назначить командиром (только админ)
     static Future<ApiResponse<void>> assignCommander(int userId) async {
         final response = await _post(ApiEndpoints.assignCommander(userId));
 
@@ -339,7 +347,6 @@ class ApiService {
         return ApiResponse.error(response.error!, statusCode: response.statusCode);
     }
 
-    /// Снять командира (только админ)
     static Future<ApiResponse<void>> removeCommander(int userId) async {
         final response = await _post(ApiEndpoints.removeCommander(userId));
 
@@ -349,7 +356,6 @@ class ApiService {
         return ApiResponse.error(response.error!, statusCode: response.statusCode);
     }
 
-    /// Понизить до новобранца (админ или командир)
     static Future<ApiResponse<void>> makeRecruit(int userId) async {
         final response = await _post(ApiEndpoints.makeRecruit(userId));
 
@@ -359,7 +365,6 @@ class ApiService {
         return ApiResponse.error(response.error!, statusCode: response.statusCode);
     }
 
-    /// Установить роль по имени (только админ)
     static Future<ApiResponse<void>> setRole(int userId, String roleName) async {
         final response = await _post(
             ApiEndpoints.setRole(userId),
@@ -372,7 +377,6 @@ class ApiService {
         return ApiResponse.error(response.error!, statusCode: response.statusCode);
     }
 
-    /// Список всех ролей
     static Future<ApiResponse<List<dynamic>>> getRoles() async {
         final response = await _get(ApiEndpoints.rolesList);
 
@@ -411,7 +415,6 @@ class ApiService {
         return ApiResponse.error(response.error!, statusCode: response.statusCode);
     }
 
-    /// Создать (или получить существующий) личный чат с пользователем
     static Future<ApiResponse<Map<String, dynamic>>> createPrivateChat(int userId) async {
         final response = await _post(ApiEndpoints.privateChat(userId));
 
@@ -447,7 +450,14 @@ class ApiService {
     // 📝 СООБЩЕНИЯ
     // =====================================================
 
-    static Future<ApiResponse<List<Message>>> getMessages(
+    /// Загрузить сообщения чата
+    /// 
+    /// Возвращает `MessagesResponse` с полями:
+    ///   • messages — список
+    ///   • hasMore — есть ли ещё
+    ///   • maxReadId — макс. ID, прочитанный другими
+    ///   • myLastReadId — мой последний прочитанный
+    static Future<ApiResponse<MessagesResponse>> getMessages(
         int chatId, {
         int limit = 50,
         int? before,
@@ -465,7 +475,13 @@ class ApiService {
             final messages = messagesJson
                 .map((m) => Message.fromJson(m as Map<String, dynamic>))
                 .toList();
-            return ApiResponse.success(messages);
+
+            return ApiResponse.success(MessagesResponse(
+                messages: messages,
+                hasMore: data['hasMore'] as bool? ?? false,
+                maxReadId: data['maxReadId'] as int? ?? 0,
+                myLastReadId: data['myLastReadId'] as int? ?? 0,
+            ));
         }
         return ApiResponse.error(response.error!, statusCode: response.statusCode);
     }

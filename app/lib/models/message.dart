@@ -19,6 +19,10 @@ class Message {
     final DateTime createdAt;
     final DateTime? updatedAt;
 
+    /// 🎯 Прочитано ли получателем?
+    /// true — прочитано (✓✓), false — отправлено (✓)
+    final bool isRead;
+
     // Данные отправителя
     final String? senderName;
     final String? senderUsername;
@@ -42,6 +46,7 @@ class Message {
         this.isEdited = false,
         required this.createdAt,
         this.updatedAt,
+        this.isRead = false,
         this.senderName,
         this.senderUsername,
         this.senderAvatar,
@@ -64,6 +69,7 @@ class Message {
             isEdited: _intToBool(json['is_edited']),
             createdAt: _parseDate(json['created_at']) ?? DateTime.now(),
             updatedAt: _parseDate(json['updated_at']),
+            isRead: _intToBool(json['is_read']),
             senderName: json['display_name'] as String? ??
                         json['sender_name'] as String?,
             senderUsername: json['username'] as String? ??
@@ -94,6 +100,7 @@ class Message {
             'is_edited': isEdited ? 1 : 0,
             'created_at': createdAt.toIso8601String(),
             'updated_at': updatedAt?.toIso8601String(),
+            'is_read': isRead ? 1 : 0,
             'reactions': reactions.map((r) => r.toJson()).toList(),
             'attachments': attachments.map((a) => a.toJson()).toList(),
         };
@@ -113,6 +120,7 @@ class Message {
         bool? isEdited,
         DateTime? createdAt,
         DateTime? updatedAt,
+        bool? isRead,
         String? senderName,
         String? senderUsername,
         String? senderAvatar,
@@ -129,6 +137,7 @@ class Message {
             isEdited: isEdited ?? this.isEdited,
             createdAt: createdAt ?? this.createdAt,
             updatedAt: updatedAt ?? this.updatedAt,
+            isRead: isRead ?? this.isRead,
             senderName: senderName ?? this.senderName,
             senderUsername: senderUsername ?? this.senderUsername,
             senderAvatar: senderAvatar ?? this.senderAvatar,
@@ -144,7 +153,6 @@ class Message {
     /// Текст, безопасный для отображения
     String get displayText {
         if (isDeleted) return 'Сообщение удалено';
-        // Если это файл — не показываем путь
         if (isFileMessage) return '';
         return text ?? '';
     }
@@ -152,10 +160,7 @@ class Message {
     // =====================================================
     // 📎 ОПРЕДЕЛЕНИЕ ТИПА ФАЙЛА
     // =====================================================
-    // Формат: "IMG:/api/files/abc123" или "VOICE:/uploads/voice.mp3"
-    // =====================================================
 
-    /// Префикс типа файла (если есть)
     String? get _filePrefix {
         if (text == null || text!.isEmpty) return null;
         if (text!.startsWith('IMG:')) return 'IMG:';
@@ -164,18 +169,14 @@ class Message {
         return null;
     }
 
-    /// Путь к файлу в тексте сообщения (если есть)
-    /// Возвращает путь БЕЗ префикса.
     String? get filePath {
         if (text == null || text!.isEmpty) return null;
 
-        // Новый формат с префиксом: IMG:, VOICE:, FILE:
         final prefix = _filePrefix;
         if (prefix != null) {
             return text!.substring(prefix.length);
         }
 
-        // Старый формат: /uploads/... или /api/files/...
         if (text!.startsWith('/uploads/') ||
             text!.startsWith('/api/files/')) {
             return text!;
@@ -184,9 +185,7 @@ class Message {
         return null;
     }
 
-    /// Есть ли в сообщении картинка?
     bool get isImageMessage {
-        // Приоритет — префикс IMG:
         if (_filePrefix == 'IMG:') return true;
 
         final path = filePath;
@@ -200,9 +199,7 @@ class Message {
                lower.endsWith('.webp');
     }
 
-    /// Есть ли в сообщении голосовое?
     bool get isVoiceMessage {
-        // Приоритет — префикс VOICE:
         if (_filePrefix == 'VOICE:') return true;
 
         final path = filePath;
@@ -217,51 +214,37 @@ class Message {
                lower.endsWith('.aac');
     }
 
-    /// Есть ли в сообщении PDF?
     bool get isPdfMessage {
         final path = filePath;
         if (path == null) return false;
         return path.toLowerCase().endsWith('.pdf');
     }
 
-    /// Есть ли в сообщении файл (любой)?
     bool get isFileMessage => filePath != null;
-
-    /// Это текстовое сообщение? (не файл)
     bool get isTextMessage => filePath == null;
 
     // =====================================================
     // 🛠️ ГЕТТЕРЫ ОТОБРАЖЕНИЯ
     // =====================================================
 
-    /// Время в формате «14:30»
     String get formattedTime {
         return DateFormat('HH:mm').format(createdAt);
     }
 
-    /// Дата в формате «13.09.2026»
     String get formattedDate {
         return DateFormat('dd.MM.yyyy').format(createdAt);
     }
 
-    /// Полная дата и время
     String get formattedDateTime {
         return DateFormat('dd.MM.yyyy HH:mm').format(createdAt);
     }
 
-    /// Есть ли вложения (старый способ)
     bool get hasAttachments => attachments.isNotEmpty;
-
-    /// Есть ли реакции
     bool get hasReactions => reactions.isNotEmpty;
-
-    /// Есть ли текст
     bool get hasText => text != null && text!.trim().isNotEmpty;
 
-    /// Своё ли сообщение
     bool isOwn(int currentUserId) => senderId == currentUserId;
 
-    /// Количество разных эмодзи-реакций
     Map<String, int> get reactionCounts {
         final counts = <String, int>{};
         for (final reaction in reactions) {
@@ -294,7 +277,7 @@ class Message {
 
     @override
     String toString() {
-        return 'Message(id: $id, chatId: $chatId, senderId: $senderId, text: ${text?.substring(0, text!.length > 20 ? 20 : text!.length)}...)';
+        return 'Message(id: $id, chatId: $chatId, senderId: $senderId, isRead: $isRead)';
     }
 
     @override
@@ -304,11 +287,12 @@ class Message {
             other.id == id &&
             other.isDeleted == isDeleted &&
             other.isEdited == isEdited &&
-            other.text == text;
+            other.text == text &&
+            other.isRead == isRead;
     }
 
     @override
-    int get hashCode => Object.hash(id, isDeleted, isEdited, text);
+    int get hashCode => Object.hash(id, isDeleted, isEdited, text, isRead);
 }
 
 // =====================================================

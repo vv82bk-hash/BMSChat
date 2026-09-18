@@ -1,20 +1,5 @@
 // =====================================================
-// 🔐 BMSChat — ЭКРАН ВХОДА / РЕГИСТРАЦИИ
-// =====================================================
-// Единый экран для входа и регистрации.
-// Переключение между режимами одной кнопкой.
-//
-// ФУНКЦИИ:
-//   • Поля логин + пароль
-//   • Показ/скрытие пароля
-//   • Кнопка «Войти» / «Зарегистрироваться»
-//   • Переключение режима
-//   • Чекбокс «Я согласен на обработку ПД» (для регистрации)
-//   • Индикатор загрузки
-//   • Показ ошибок
-//
-// ПОСЛЕ ВХОДА:
-//   Автоматический переход на ChatsScreen
+// 🔐 BMSChat — ЭКРАН ВХОДА / РЕГИСТРАЦИИ (УКРАШЕННЫЙ)
 // =====================================================
 
 import 'package:flutter/material.dart';
@@ -34,17 +19,14 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-    // =====================================================
-    // 🎛️ КОНТРОЛЛЕРЫ И СОСТОЯНИЕ
-    // =====================================================
     final _usernameController = TextEditingController();
     final _passwordController = TextEditingController();
     final _displayNameController = TextEditingController();
     final _formKey = GlobalKey<FormState>();
 
-    bool _isRegisterMode = false;      // false = вход, true = регистрация
-    bool _obscurePassword = true;      // скрыт ли пароль
-    bool _agreedToPrivacy = false;     // согласен на обработку ПД
+    bool _isRegisterMode = false;
+    bool _obscurePassword = true;
+    bool _agreedToPrivacy = false;
 
     @override
     void dispose() {
@@ -58,10 +40,8 @@ class _LoginScreenState extends State<LoginScreen> {
     // 🔑 ВХОД / РЕГИСТРАЦИЯ
     // =====================================================
     Future<void> _submit() async {
-        // Валидация
         if (!_formKey.currentState!.validate()) return;
 
-        // Проверка чекбокса при регистрации
         if (_isRegisterMode && !_agreedToPrivacy) {
             _showError('Необходимо согласие на обработку персональных данных');
             return;
@@ -73,9 +53,6 @@ class _LoginScreenState extends State<LoginScreen> {
         final password = _passwordController.text;
         final displayName = _displayNameController.text.trim();
 
-        // ═══════════════════════════════════════════
-        // РЕЖИМ РЕГИСТРАЦИИ
-        // ═══════════════════════════════════════════
         if (_isRegisterMode) {
             final success = await auth.register(
                 username,
@@ -99,9 +76,6 @@ class _LoginScreenState extends State<LoginScreen> {
             return;
         }
 
-        // ═══════════════════════════════════════════
-        // РЕЖИМ ВХОДА
-        // ═══════════════════════════════════════════
         final success = await auth.login(username, password);
 
         if (!mounted) return;
@@ -109,10 +83,8 @@ class _LoginScreenState extends State<LoginScreen> {
         if (success) {
             AppLogger.success('Вход выполнен, переход на ChatsScreen');
 
-            // Инициализируем Socket-слушатели в ChatProvider
             chat.initSocketListeners();
 
-            // Переходим на ChatsScreen
             Navigator.of(context).pushReplacement(
                 MaterialPageRoute(
                     builder: (_) => const ChatsScreen(),
@@ -135,7 +107,12 @@ class _LoginScreenState extends State<LoginScreen> {
                     children: [
                         const Icon(Icons.error_outline, color: Colors.white),
                         const SizedBox(width: 12),
-                        Expanded(child: Text(message)),
+                        Expanded(
+                            child: Text(
+                                message,
+                                style: const TextStyle(fontSize: 15),
+                            ),
+                        ),
                     ],
                 ),
                 backgroundColor: RastaTheme.error,
@@ -157,7 +134,12 @@ class _LoginScreenState extends State<LoginScreen> {
                     children: [
                         const Icon(Icons.check_circle_outline, color: Colors.white),
                         const SizedBox(width: 12),
-                        Expanded(child: Text(message)),
+                        Expanded(
+                            child: Text(
+                                message,
+                                style: const TextStyle(fontSize: 15),
+                            ),
+                        ),
                     ],
                 ),
                 backgroundColor: RastaTheme.success,
@@ -180,7 +162,10 @@ class _LoginScreenState extends State<LoginScreen> {
                 backgroundColor: RastaTheme.surface,
                 title: const Text(
                     'Политика обработки ПД',
-                    style: TextStyle(color: RastaTheme.textPrimary),
+                    style: TextStyle(
+                        color: RastaTheme.textPrimary,
+                        fontSize: 20,
+                    ),
                 ),
                 content: const SingleChildScrollView(
                     child: Text(
@@ -205,7 +190,11 @@ class _LoginScreenState extends State<LoginScreen> {
                         '6. Согласие\n'
                         'Используя приложение, вы соглашаетесь с обработкой данных '
                         'в указанных целях.',
-                        style: TextStyle(color: RastaTheme.textSecondary),
+                        style: TextStyle(
+                            color: RastaTheme.textSecondary,
+                            fontSize: 15,
+                            height: 1.4,
+                        ),
                     ),
                 ),
                 actions: [
@@ -213,7 +202,10 @@ class _LoginScreenState extends State<LoginScreen> {
                         onPressed: () => Navigator.pop(context),
                         child: const Text(
                             'Понятно',
-                            style: TextStyle(color: RastaTheme.rastaYellow),
+                            style: TextStyle(
+                                color: RastaTheme.rastaYellow,
+                                fontSize: 16,
+                            ),
                         ),
                     ),
                 ],
@@ -253,14 +245,14 @@ class _LoginScreenState extends State<LoginScreen> {
                                     Text(
                                         _isRegisterMode ? 'Регистрация' : 'Вход',
                                         style: const TextStyle(
-                                            fontSize: 24,
+                                            fontSize: 28,
                                             fontWeight: FontWeight.w700,
                                             color: RastaTheme.textPrimary,
                                         ),
                                         textAlign: TextAlign.center,
                                     ),
 
-                                    const SizedBox(height: 24),
+                                    const SizedBox(height: 28),
 
                                     // ══════════════════════════════════
                                     // ПОЛЕ: ЛОГИН
@@ -270,6 +262,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                         enabled: !auth.isLoading,
                                         style: const TextStyle(
                                             color: RastaTheme.textPrimary,
+                                            fontSize: 16,
                                         ),
                                         decoration: const InputDecoration(
                                             labelText: 'Логин',
@@ -277,6 +270,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                             prefixIcon: Icon(
                                                 Icons.person_outline,
                                                 color: RastaTheme.textMuted,
+                                                size: 24,
                                             ),
                                         ),
                                         validator: (value) {
@@ -294,7 +288,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                         },
                                     ),
 
-                                    const SizedBox(height: 16),
+                                    const SizedBox(height: 18),
 
                                     // ══════════════════════════════════
                                     // ПОЛЕ: ОТОБРАЖАЕМОЕ ИМЯ (только для регистрации)
@@ -305,6 +299,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                             enabled: !auth.isLoading,
                                             style: const TextStyle(
                                                 color: RastaTheme.textPrimary,
+                                                fontSize: 16,
                                             ),
                                             decoration: const InputDecoration(
                                                 labelText: 'Отображаемое имя',
@@ -312,10 +307,11 @@ class _LoginScreenState extends State<LoginScreen> {
                                                 prefixIcon: Icon(
                                                     Icons.badge_outlined,
                                                     color: RastaTheme.textMuted,
+                                                    size: 24,
                                                 ),
                                             ),
                                         ),
-                                        const SizedBox(height: 16),
+                                        const SizedBox(height: 18),
                                     ],
 
                                     // ══════════════════════════════════
@@ -327,6 +323,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                         obscureText: _obscurePassword,
                                         style: const TextStyle(
                                             color: RastaTheme.textPrimary,
+                                            fontSize: 16,
                                         ),
                                         decoration: InputDecoration(
                                             labelText: 'Пароль',
@@ -334,6 +331,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                             prefixIcon: const Icon(
                                                 Icons.lock_outline,
                                                 color: RastaTheme.textMuted,
+                                                size: 24,
                                             ),
                                             suffixIcon: IconButton(
                                                 icon: Icon(
@@ -341,6 +339,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                                         ? Icons.visibility_outlined
                                                         : Icons.visibility_off_outlined,
                                                     color: RastaTheme.textMuted,
+                                                    size: 24,
                                                 ),
                                                 onPressed: () {
                                                     setState(() {
@@ -364,25 +363,41 @@ class _LoginScreenState extends State<LoginScreen> {
                                     // ЧЕКБОКС ПД (только при регистрации)
                                     // ══════════════════════════════════
                                     if (_isRegisterMode) ...[
-                                        const SizedBox(height: 16),
+                                        const SizedBox(height: 18),
                                         _buildPrivacyCheckbox(),
                                     ],
 
-                                    const SizedBox(height: 24),
+                                    const SizedBox(height: 28),
 
                                     // ══════════════════════════════════
                                     // КНОПКА ВХОДА / РЕГИСТРАЦИИ
                                     // ══════════════════════════════════
-                                    SizedBox(
-                                        height: 56,
+                                    Container(
+                                        height: 60,
+                                        decoration: BoxDecoration(
+                                            borderRadius: BorderRadius.circular(16),
+                                            boxShadow: [
+                                                BoxShadow(
+                                                    color: RastaTheme.rastaYellow
+                                                        .withValues(alpha: 0.4),
+                                                    blurRadius: 20,
+                                                    spreadRadius: 2,
+                                                ),
+                                            ],
+                                        ),
                                         child: ElevatedButton(
                                             onPressed: auth.isLoading ? null : _submit,
+                                            style: ElevatedButton.styleFrom(
+                                                shape: RoundedRectangleBorder(
+                                                    borderRadius: BorderRadius.circular(16),
+                                                ),
+                                            ),
                                             child: auth.isLoading
                                                 ? const SizedBox(
-                                                    width: 24,
-                                                    height: 24,
+                                                    width: 26,
+                                                    height: 26,
                                                     child: CircularProgressIndicator(
-                                                        strokeWidth: 2.5,
+                                                        strokeWidth: 3,
                                                         valueColor:
                                                             AlwaysStoppedAnimation<Color>(
                                                                 RastaTheme.background),
@@ -393,14 +408,14 @@ class _LoginScreenState extends State<LoginScreen> {
                                                         ? '📝 Зарегистрироваться'
                                                         : '🔑 Войти',
                                                     style: const TextStyle(
-                                                        fontSize: 16,
+                                                        fontSize: 18,
                                                         fontWeight: FontWeight.w700,
                                                     ),
                                                 ),
                                         ),
                                     ),
 
-                                    const SizedBox(height: 16),
+                                    const SizedBox(height: 18),
 
                                     // ══════════════════════════════════
                                     // ПЕРЕКЛЮЧЕНИЕ РЕЖИМА
@@ -419,13 +434,13 @@ class _LoginScreenState extends State<LoginScreen> {
                                                 : 'Нет аккаунта? Создать',
                                             style: const TextStyle(
                                                 color: RastaTheme.rastaYellow,
-                                                fontSize: 14,
+                                                fontSize: 16,
                                                 fontWeight: FontWeight.w600,
                                             ),
                                         ),
                                     ),
 
-                                    const SizedBox(height: 24),
+                                    const SizedBox(height: 28),
 
                                     // ══════════════════════════════════
                                     // ФУТЕР
@@ -433,7 +448,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                     Text(
                                         '🌿 One Love 🤙',
                                         style: TextStyle(
-                                            fontSize: 14,
+                                            fontSize: 16,
                                             fontWeight: FontWeight.w600,
                                             color: RastaTheme.textMuted
                                                 .withValues(alpha: 0.7),
@@ -457,15 +472,20 @@ class _LoginScreenState extends State<LoginScreen> {
             children: [
                 // Круг с картинкой логотипа
                 Container(
-                    width: 120,
-                    height: 120,
+                    width: 160,
+                    height: 160,
                     decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         boxShadow: [
                             BoxShadow(
-                                color: RastaTheme.rastaYellow.withValues(alpha: 0.3),
-                                blurRadius: 30,
-                                spreadRadius: 3,
+                                color: RastaTheme.rastaYellow.withValues(alpha: 0.4),
+                                blurRadius: 40,
+                                spreadRadius: 5,
+                            ),
+                            BoxShadow(
+                                color: RastaTheme.rastaRed.withValues(alpha: 0.2),
+                                blurRadius: 60,
+                                spreadRadius: 10,
                             ),
                         ],
                     ),
@@ -474,13 +494,12 @@ class _LoginScreenState extends State<LoginScreen> {
                             'assets/images/logo.png',
                             fit: BoxFit.cover,
                             errorBuilder: (context, error, stackTrace) {
-                                // Фолбэк — эмодзи, если картинка не найдена
                                 return Container(
                                     color: RastaTheme.surfaceSecondary,
                                     child: const Center(
                                         child: Text(
                                             '🎯',
-                                            style: TextStyle(fontSize: 56),
+                                            style: TextStyle(fontSize: 72),
                                         ),
                                     ),
                                 );
@@ -489,37 +508,44 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                 ),
 
-                const SizedBox(height: 16),
+                const SizedBox(height: 20),
 
                 // Название
                 const Text(
                     'BMSChat',
                     style: TextStyle(
-                        fontSize: 32,
+                        fontSize: 42,
                         fontWeight: FontWeight.w900,
                         color: RastaTheme.rastaYellow,
-                        letterSpacing: -1,
+                        letterSpacing: -1.5,
+                        shadows: [
+                            Shadow(
+                                color: Color(0x80FED100),
+                                blurRadius: 20,
+                            ),
+                        ],
                     ),
                 ),
 
-                const SizedBox(height: 4),
+                const SizedBox(height: 6),
 
                 // Подзаголовок
                 Text(
                     'Отряд Боба Марли',
                     style: TextStyle(
-                        fontSize: 14,
-                        color: RastaTheme.textSecondary.withValues(alpha: 0.7),
-                        letterSpacing: 1.5,
+                        fontSize: 18,
+                        color: RastaTheme.textSecondary.withValues(alpha: 0.8),
+                        letterSpacing: 2,
+                        fontWeight: FontWeight.w500,
                     ),
                 ),
 
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
 
                 // Раста-полоска
                 Container(
-                    height: 3,
-                    width: 100,
+                    height: 4,
+                    width: 140,
                     decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(2),
                         gradient: const LinearGradient(
@@ -529,6 +555,13 @@ class _LoginScreenState extends State<LoginScreen> {
                                 RastaTheme.rastaGreen,
                             ],
                         ),
+                        boxShadow: [
+                            BoxShadow(
+                                color: RastaTheme.rastaYellow.withValues(alpha: 0.5),
+                                blurRadius: 15,
+                                spreadRadius: 2,
+                            ),
+                        ],
                     ),
                 ),
             ],
@@ -544,8 +577,8 @@ class _LoginScreenState extends State<LoginScreen> {
             children: [
                 // Чекбокс
                 SizedBox(
-                    width: 24,
-                    height: 24,
+                    width: 26,
+                    height: 26,
                     child: Checkbox(
                         value: _agreedToPrivacy,
                         onChanged: (value) {
@@ -562,7 +595,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                 ),
 
-                const SizedBox(width: 8),
+                const SizedBox(width: 10),
 
                 // Текст
                 Expanded(
@@ -577,7 +610,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 const Text(
                                     'Я согласен на ',
                                     style: TextStyle(
-                                        fontSize: 13,
+                                        fontSize: 14,
                                         color: RastaTheme.textSecondary,
                                     ),
                                 ),
@@ -586,7 +619,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                     child: const Text(
                                         'обработку персональных данных',
                                         style: TextStyle(
-                                            fontSize: 13,
+                                            fontSize: 14,
                                             color: RastaTheme.rastaYellow,
                                             decoration: TextDecoration.underline,
                                             decorationColor: RastaTheme.rastaYellow,

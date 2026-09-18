@@ -1,6 +1,8 @@
 // =====================================================
-// 💬 BMSChat — ПУЗЫРЬ СООБЩЕНИЯ
+// 💬 BMSChat — ПУЗЫРЬ СООБЩЕНИЯ (С ПРОПОРЦИЯМИ)
 // =====================================================
+
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
@@ -28,12 +30,12 @@ class MessageBubble extends StatelessWidget {
                 alignment: isOwn ? Alignment.centerRight : Alignment.centerLeft,
                 child: Container(
                     margin: EdgeInsets.only(
-                        left: isOwn ? 50 : 10,
-                        right: isOwn ? 10 : 50,
-                        top: 1.5,
-                        bottom: 1.5,
+                        left: isOwn ? 50 : 12,
+                        right: isOwn ? 12 : 50,
+                        top: 2,
+                        bottom: 2,
                     ),
-                    padding: EdgeInsets.all(message.isImageMessage ? 3 : 10),
+                    padding: EdgeInsets.all(message.isImageMessage ? 4 : 12),
                     decoration: BoxDecoration(
                         gradient: isOwn && !message.isImageMessage
                             ? RastaTheme.ownBubbleGradient
@@ -42,48 +44,53 @@ class MessageBubble extends StatelessWidget {
                             ? null
                             : (isOwn ? null : RastaTheme.bubbleOther),
                         borderRadius: BorderRadius.only(
-                            topLeft: const Radius.circular(16),
-                            topRight: const Radius.circular(16),
-                            bottomLeft: Radius.circular(isOwn ? 16 : 4),
-                            bottomRight: Radius.circular(isOwn ? 4 : 16),
+                            topLeft: const Radius.circular(18),
+                            topRight: const Radius.circular(18),
+                            bottomLeft: Radius.circular(isOwn ? 18 : 6),
+                            bottomRight: Radius.circular(isOwn ? 6 : 18),
                         ),
+                        boxShadow: [
+                            BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.25),
+                                blurRadius: 6,
+                                offset: const Offset(0, 2),
+                            ),
+                        ],
                     ),
                     child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                            // Имя отправителя (только для чужих, не для картинок)
                             if (!isOwn &&
                                 message.senderName != null &&
                                 !message.isImageMessage)
                                 Padding(
-                                    padding: const EdgeInsets.only(bottom: 3),
+                                    padding: const EdgeInsets.only(bottom: 4),
                                     child: Text(
                                         message.senderName!,
                                         style: const TextStyle(
-                                            fontSize: 11,
+                                            fontSize: 12,
                                             fontWeight: FontWeight.w700,
                                             color: RastaTheme.rastaYellow,
                                         ),
                                     ),
                                 ),
 
-                            // Ответ на сообщение
                             if (message.replyToId != null)
                                 Padding(
                                     padding: EdgeInsets.only(
-                                        bottom: 5,
+                                        bottom: 6,
                                         left: message.isImageMessage ? 8 : 0,
                                         right: message.isImageMessage ? 8 : 0,
-                                        top: message.isImageMessage ? 5 : 0,
+                                        top: message.isImageMessage ? 6 : 0,
                                     ),
                                     child: Container(
-                                        padding: const EdgeInsets.all(5),
+                                        padding: const EdgeInsets.all(6),
                                         decoration: BoxDecoration(
                                             color: Colors.black
-                                                .withValues(alpha: 0.15),
+                                                .withValues(alpha: 0.2),
                                             borderRadius:
-                                                BorderRadius.circular(5),
+                                                BorderRadius.circular(6),
                                             border: const Border(
                                                 left: BorderSide(
                                                     color: RastaTheme
@@ -95,7 +102,7 @@ class MessageBubble extends StatelessWidget {
                                         child: const Text(
                                             'Ответ на сообщение',
                                             style: TextStyle(
-                                                fontSize: 10,
+                                                fontSize: 11,
                                                 fontStyle: FontStyle.italic,
                                                 color: RastaTheme.textMuted,
                                             ),
@@ -103,9 +110,6 @@ class MessageBubble extends StatelessWidget {
                                     ),
                                 ),
 
-                            // ═══════════════════════════════════════
-                            // КОНТЕНТ
-                            // ═══════════════════════════════════════
                             if (message.isImageMessage)
                                 _buildImage(message)
                             else if (message.isFileMessage)
@@ -113,13 +117,12 @@ class MessageBubble extends StatelessWidget {
                             else
                                 _buildText(message, isOwn),
 
-                            // Время + метки
                             Padding(
                                 padding: EdgeInsets.only(
-                                    top: 3,
+                                    top: 4,
                                     left: message.isImageMessage ? 8 : 0,
                                     right: message.isImageMessage ? 8 : 0,
-                                    bottom: message.isImageMessage ? 5 : 0,
+                                    bottom: message.isImageMessage ? 6 : 0,
                                 ),
                                 child: Row(
                                     mainAxisSize: MainAxisSize.min,
@@ -127,11 +130,11 @@ class MessageBubble extends StatelessWidget {
                                         if (message.isEdited)
                                             const Padding(
                                                 padding:
-                                                    EdgeInsets.only(right: 3),
+                                                    EdgeInsets.only(right: 4),
                                                 child: Text(
                                                     'изменено',
                                                     style: TextStyle(
-                                                        fontSize: 9,
+                                                        fontSize: 10,
                                                         fontStyle:
                                                             FontStyle.italic,
                                                         color: RastaTheme
@@ -142,47 +145,61 @@ class MessageBubble extends StatelessWidget {
                                         Text(
                                             message.formattedTime,
                                             style: TextStyle(
-                                                fontSize: 9,
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.w500,
                                                 color: isOwn &&
                                                         !message.isImageMessage
                                                     ? Colors.black54
                                                     : RastaTheme.textMuted,
                                             ),
                                         ),
+                                        if (isOwn) ...[
+                                            const SizedBox(width: 4),
+                                            _buildReadIcon(
+                                                isImage: message.isImageMessage,
+                                            ),
+                                        ],
                                     ],
                                 ),
                             ),
 
-                            // Реакции
                             if (message.hasReactions)
                                 Padding(
                                     padding: EdgeInsets.only(
-                                        top: 3,
+                                        top: 4,
                                         left: message.isImageMessage ? 8 : 0,
                                         right: message.isImageMessage ? 8 : 0,
-                                        bottom: message.isImageMessage ? 5 : 0,
+                                        bottom: message.isImageMessage ? 6 : 0,
                                     ),
                                     child: Wrap(
-                                        spacing: 3,
-                                        runSpacing: 2,
+                                        spacing: 4,
+                                        runSpacing: 3,
                                         children: message.reactionCounts.entries
                                             .map((entry) => Container(
                                                 padding:
                                                     const EdgeInsets.symmetric(
-                                                    horizontal: 5,
-                                                    vertical: 1.5,
+                                                    horizontal: 7,
+                                                    vertical: 3,
                                                 ),
                                                 decoration: BoxDecoration(
                                                     color: Colors.black
-                                                        .withValues(alpha: 0.15),
+                                                        .withValues(alpha: 0.2),
                                                     borderRadius:
                                                         BorderRadius.circular(
-                                                            8),
+                                                            10),
+                                                    border: Border.all(
+                                                        color: RastaTheme
+                                                            .rastaYellow
+                                                            .withValues(alpha: 0.3),
+                                                        width: 0.5,
+                                                    ),
                                                 ),
                                                 child: Text(
                                                     '${entry.key} ${entry.value}',
                                                     style: const TextStyle(
-                                                        fontSize: 11,
+                                                        fontSize: 12,
+                                                        fontWeight:
+                                                            FontWeight.w600,
                                                     ),
                                                 ),
                                             ))
@@ -197,68 +214,35 @@ class MessageBubble extends StatelessWidget {
     }
 
     // =====================================================
-    // 📷 КАРТИНКА
+    // 🎯 ГАЛОЧКА ПРОЧТЕНИЯ
+    // =====================================================
+    Widget _buildReadIcon({required bool isImage}) {
+        final Color color;
+        if (isImage) {
+            color = Colors.white;
+        } else {
+            color = message.isRead ? Colors.black87 : Colors.black54;
+        }
+
+        return Icon(
+            message.isRead ? Icons.done_all : Icons.done,
+            size: 14,
+            color: color,
+        );
+    }
+
+    // =====================================================
+    // 📷 КАРТИНКА (АВТО-ПРОПОРЦИИ)
     // =====================================================
     Widget _buildImage(Message message) {
         final url = Constants.getFullFileUrl(message.filePath!);
 
         return ClipRRect(
-            borderRadius: BorderRadius.circular(13),
-            child: Image.network(
-                url,
-                width: 220,
-                fit: BoxFit.cover,
-                loadingBuilder: (context, child, progress) {
-                    if (progress == null) return child;
-
-                    return Container(
-                        width: 220,
-                        height: 180,
-                        color: RastaTheme.surfaceSecondary,
-                        child: Center(
-                            child: CircularProgressIndicator(
-                                value: progress.expectedTotalBytes != null
-                                    ? progress.cumulativeBytesLoaded /
-                                        progress.expectedTotalBytes!
-                                    : null,
-                                valueColor:
-                                    const AlwaysStoppedAnimation<Color>(
-                                    RastaTheme.rastaYellow,
-                                ),
-                            ),
-                        ),
-                    );
-                },
-                errorBuilder: (context, error, stackTrace) {
-                    return Container(
-                        width: 220,
-                        height: 140,
-                        decoration: BoxDecoration(
-                            color: RastaTheme.surfaceSecondary,
-                            borderRadius: BorderRadius.circular(13),
-                        ),
-                        child: const Center(
-                            child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                    Icon(
-                                        Icons.broken_image_outlined,
-                                        size: 36,
-                                        color: RastaTheme.textMuted,
-                                    ),
-                                    SizedBox(height: 6),
-                                    Text(
-                                        'Не удалось загрузить',
-                                        style: TextStyle(
-                                            fontSize: 11,
-                                            color: RastaTheme.textMuted,
-                                        ),
-                                    ),
-                                ],
-                            ),
-                        ),
-                    );
-                },
+            borderRadius: BorderRadius.circular(14),
+            child: _ProportionalImage(
+                url: url,
+                maxWidth: 280,
+                maxHeight: 400,
             ),
         );
     }
@@ -276,14 +260,15 @@ class MessageBubble extends StatelessWidget {
                 Icon(
                     Icons.insert_drive_file_outlined,
                     color: isOwn ? Colors.black54 : RastaTheme.rastaYellow,
-                    size: 28,
+                    size: 32,
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 8),
                 Flexible(
                     child: Text(
                         fileName,
                         style: TextStyle(
-                            fontSize: 13,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
                             color: isOwn
                                 ? RastaTheme.bubbleOwnText
                                 : RastaTheme.bubbleOtherText,
@@ -303,13 +288,198 @@ class MessageBubble extends StatelessWidget {
         return Text(
             message.displayText,
             style: TextStyle(
-                fontSize: 15,
+                fontSize: 16,
+                fontWeight: FontWeight.w400,
                 color: isOwn
                     ? RastaTheme.bubbleOwnText
                     : RastaTheme.bubbleOtherText,
                 fontStyle:
                     message.isDeleted ? FontStyle.italic : FontStyle.normal,
-                height: 1.25,
+                height: 1.3,
+            ),
+        );
+    }
+}
+
+// =====================================================
+// 📷 ПРОПОРЦИОНАЛЬНАЯ КАРТИНКА
+// =====================================================
+// Загружает картинку, узнаёт её размеры через ImageStream,
+// и показывает с сохранением пропорций.
+// =====================================================
+
+class _ProportionalImage extends StatefulWidget {
+    final String url;
+    final double maxWidth;
+    final double maxHeight;
+
+    const _ProportionalImage({
+        required this.url,
+        this.maxWidth = 280,
+        this.maxHeight = 400,
+    });
+
+    @override
+    State<_ProportionalImage> createState() => _ProportionalImageState();
+}
+
+class _ProportionalImageState extends State<_ProportionalImage> {
+    /// Итоговые размеры
+    double? _displayWidth;
+    double? _displayHeight;
+
+    /// Ошибка загрузки
+    bool _hasError = false;
+
+    @override
+    void initState() {
+        super.initState();
+        _resolveImage();
+    }
+
+    @override
+    void didUpdateWidget(_ProportionalImage oldWidget) {
+        super.didUpdateWidget(oldWidget);
+        if (oldWidget.url != widget.url) {
+            _displayWidth = null;
+            _displayHeight = null;
+            _hasError = false;
+            _resolveImage();
+        }
+    }
+
+    // =====================================================
+    // 🔍 ЗАГРУЗКА И РАСЧЁТ РАЗМЕРОВ
+    // =====================================================
+    void _resolveImage() {
+        final ImageProvider provider = NetworkImage(widget.url);
+        final ImageStream stream = provider.resolve(ImageConfiguration.empty);
+
+        final ImageStreamListener listener = ImageStreamListener(
+            (ImageInfo info, bool synchronousCall) {
+                if (!mounted) return;
+
+                final ui.Image image = info.image;
+                final imageWidth = image.width.toDouble();
+                final imageHeight = image.height.toDouble();
+
+                if (imageWidth <= 0 || imageHeight <= 0) {
+                    setState(() => _hasError = true);
+                    return;
+                }
+
+                // Пропорции
+                final aspectRatio = imageWidth / imageHeight;
+
+                // Начальная ширина — не больше maxWidth
+                double width = imageWidth > widget.maxWidth
+                    ? widget.maxWidth
+                    : imageWidth;
+
+                // Высота по пропорциям
+                double height = width / aspectRatio;
+
+                // Если высота больше maxHeight → корректируем
+                if (height > widget.maxHeight) {
+                    height = widget.maxHeight;
+                    width = height * aspectRatio;
+                }
+
+                setState(() {
+                    _displayWidth = width;
+                    _displayHeight = height;
+                });
+            },
+            onError: (exception, stackTrace) {
+                if (!mounted) return;
+                setState(() => _hasError = true);
+            },
+        );
+
+        stream.addListener(listener);
+    }
+
+    // =====================================================
+    // 🎨 ОТРИСОВКА
+    // =====================================================
+    @override
+    Widget build(BuildContext context) {
+        // Ошибка
+        if (_hasError) {
+            return _buildError();
+        }
+
+        // Ещё загружается
+        if (_displayWidth == null || _displayHeight == null) {
+            return _buildLoading();
+        }
+
+        // Готово — показываем с правильными пропорциями
+        return Image.network(
+            widget.url,
+            width: _displayWidth,
+            height: _displayHeight,
+            fit: BoxFit.contain,
+            cacheWidth: (_displayWidth! * 2).toInt(),
+            errorBuilder: (context, error, stackTrace) => _buildError(),
+            loadingBuilder: (context, child, progress) {
+                if (progress == null) return child;
+                return _buildLoading();
+            },
+        );
+    }
+
+    // =====================================================
+    // ⏳ ЗАГРУЗКА
+    // =====================================================
+    Widget _buildLoading() {
+        return Container(
+            width: widget.maxWidth,
+            height: 200,
+            decoration: BoxDecoration(
+                color: RastaTheme.surfaceSecondary,
+                borderRadius: BorderRadius.circular(14),
+            ),
+            child: const Center(
+                child: CircularProgressIndicator(
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                        RastaTheme.rastaYellow,
+                    ),
+                ),
+            ),
+        );
+    }
+
+    // =====================================================
+    // ❌ ОШИБКА
+    // =====================================================
+    Widget _buildError() {
+        return Container(
+            width: widget.maxWidth,
+            height: 150,
+            decoration: BoxDecoration(
+                color: RastaTheme.surfaceSecondary,
+                borderRadius: BorderRadius.circular(14),
+            ),
+            child: const Center(
+                child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                        Icon(
+                            Icons.broken_image_outlined,
+                            size: 40,
+                            color: RastaTheme.textMuted,
+                        ),
+                        SizedBox(height: 8),
+                        Text(
+                            'Не удалось загрузить',
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: RastaTheme.textMuted,
+                            ),
+                        ),
+                    ],
+                ),
             ),
         );
     }

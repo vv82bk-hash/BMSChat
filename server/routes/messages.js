@@ -19,10 +19,11 @@ const logger = require('../utils/logger');
 // =====================================================
 // 📜 GET /api/messages/:chatId
 // =====================================================
-// ОПТИМИЗИРОВАНО: вместо N+1 запросов — 3 запроса.
-//   1. Сообщения
-//   2. Все реакции для этих сообщений
-//   3. Все вложения для этих сообщений
+// Возвращает:
+//   • messages — список сообщений
+//   • hasMore — есть ли ещё
+//   • maxReadId — максимальный ID прочитанного среди других
+//   • myLastReadId — мой последний прочитанный
 // =====================================================
 router.get('/:chatId', authMiddleware, async (req, res) => {
     try {
@@ -59,15 +60,36 @@ router.get('/:chatId', authMiddleware, async (req, res) => {
 
         const result = await pool.query(query, params);
 
+        // ─────────────────────────────────────────
+        // 2️⃣ Статусы прочтения
+        // ─────────────────────────────────────────
+        // maxReadId — максимальный ID прочитанного СРЕДИ ДРУГИХ
+        const readStatusResult = await pool.query(`
+            SELECT 
+                (SELECT MAX(last_read_message_id) 
+                 FROM chat_members 
+                 WHERE chat_id = $1 AND user_id != $2) as max_read_id,
+                (SELECT last_read_message_id 
+                 FROM chat_members 
+                 WHERE chat_id = $1 AND user_id = $2) as my_last_read_id
+        `, [chatId, req.user.id]);
+
+        const maxReadId = readStatusResult.rows[0]?.max_read_id || 0;
+        const myLastReadId = readStatusResult.rows[0]?.my_last_read_id || 0;
+
         if (result.rows.length === 0) {
-            return res.json({ messages: [], hasMore: false });
+            return res.json({
+                messages: [],
+                hasMore: false,
+                maxReadId,
+                myLastReadId,
+            });
         }
 
-        // Получаем ID всех сообщений
         const messageIds = result.rows.map((m) => m.id);
 
         // ─────────────────────────────────────────
-        // 2️⃣ Все реакции — ОДНИМ запросом
+        // 3️⃣ Реакции
         // ─────────────────────────────────────────
         const reactionsResult = await pool.query(`
             SELECT r.message_id, r.emoji, r.user_id, u.display_name
@@ -76,7 +98,6 @@ router.get('/:chatId', authMiddleware, async (req, res) => {
             WHERE r.message_id = ANY($1::int[])
         `, [messageIds]);
 
-        // Группируем реакции по message_id
         const reactionsByMessage = {};
         for (const r of reactionsResult.rows) {
             if (!reactionsByMessage[r.message_id]) {
@@ -90,7 +111,7 @@ router.get('/:chatId', authMiddleware, async (req, res) => {
         }
 
         // ─────────────────────────────────────────
-        // 3️⃣ Все вложения — ОДНИМ запросом
+        // 4️⃣ Вложения
         // ─────────────────────────────────────────
         const attachmentsResult = await pool.query(`
             SELECT id, message_id, file_type, file_path, file_name,
@@ -99,7 +120,6 @@ router.get('/:chatId', authMiddleware, async (req, res) => {
             WHERE message_id = ANY($1::int[])
         `, [messageIds]);
 
-        // Группируем вложения по message_id
         const attachmentsByMessage = {};
         for (const a of attachmentsResult.rows) {
             if (!attachmentsByMessage[a.message_id]) {
@@ -119,7 +139,7 @@ router.get('/:chatId', authMiddleware, async (req, res) => {
         }
 
         // ─────────────────────────────────────────
-        // 4️⃣ Собираем всё вместе
+        // 5️⃣ Собираем
         // ─────────────────────────────────────────
         const messages = result.rows.map((m) => ({
             ...m,
@@ -128,12 +148,13 @@ router.get('/:chatId', authMiddleware, async (req, res) => {
             attachments: attachmentsByMessage[m.id] || [],
         }));
 
-        // Разворачиваем (от старых к новым)
         messages.reverse();
 
         res.json({
             messages,
             hasMore: result.rows.length === limit,
+            maxReadId,
+            myLastReadId,
         });
     } catch (error) {
         logger.error('Ошибка /messages/:chatId', error);
@@ -164,7 +185,6 @@ router.post('/:chatId', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'Сообщение слишком длинное (макс 4000 символов)' });
         }
 
-        // Проверка reply_to_id
         if (reply_to_id) {
             const replyTo = await pool.query(`
                 SELECT id, chat_id FROM messages WHERE id = $1 AND is_deleted = FALSE
@@ -195,7 +215,6 @@ router.post('/:chatId', authMiddleware, async (req, res) => {
 
         const message = messageResult.rows[0];
 
-        // Socket.IO рассылка
         const io = req.app.get('io');
         if (io) {
             io.to(`chat_${chatId}`).emit('new_message', {

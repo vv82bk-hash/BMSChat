@@ -31,6 +31,10 @@ class ChatProvider extends ChangeNotifier {
     final Set<int> _onlineUserIds = {};
     int _onlineCount = 0;
 
+    // 🎯 Статусы прочтения
+    int _maxReadMessageId = 0;
+    int _myLastReadMessageId = 0;
+
     // Ответ на сообщение
     Message? _replyToMessage;
 
@@ -49,6 +53,7 @@ class ChatProvider extends ChangeNotifier {
     StreamSubscription? _messageDeletedSub;
     StreamSubscription? _reactionAddedSub;
     StreamSubscription? _reactionRemovedSub;
+    StreamSubscription? _messageReadSub;
     StreamSubscription? _userOnlineSub;
     StreamSubscription? _userOfflineSub;
     StreamSubscription? _onlineCountSub;
@@ -70,6 +75,12 @@ class ChatProvider extends ChangeNotifier {
     String? get chatsError => _chatsError;
     String? get messagesError => _messagesError;
     Message? get replyToMessage => _replyToMessage;
+
+    /// Максимальный ID, прочитанный другими участниками
+    int get maxReadMessageId => _maxReadMessageId;
+
+    /// Мой последний прочитанный ID
+    int get myLastReadMessageId => _myLastReadMessageId;
 
     String? get typingUser {
         if (_typingUsers.isEmpty) return null;
@@ -123,6 +134,11 @@ class ChatProvider extends ChangeNotifier {
         _reactionRemovedSub?.cancel();
         _reactionRemovedSub =
             SocketService.onReactionRemoved.listen(_handleReactionRemoved);
+
+        // 🎯 Подписка на прочтение
+        _messageReadSub?.cancel();
+        _messageReadSub =
+            SocketService.onMessageRead.listen(_handleMessageRead);
 
         _userOnlineSub?.cancel();
         _userOnlineSub = SocketService.onUserOnline.listen((data) {
@@ -192,6 +208,8 @@ class ChatProvider extends ChangeNotifier {
             _typingUsers.clear();
             _replyToMessage = null;
             _messagesError = null;
+            _maxReadMessageId = 0;
+            _myLastReadMessageId = 0;
             notifyListeners();
 
             await _loadMessages(chatId);
@@ -205,6 +223,8 @@ class ChatProvider extends ChangeNotifier {
         _messages = [];
         _typingUsers.clear();
         _replyToMessage = null;
+        _maxReadMessageId = 0;
+        _myLastReadMessageId = 0;
         notifyListeners();
     }
 
@@ -212,6 +232,7 @@ class ChatProvider extends ChangeNotifier {
     // 💬 СООБЩЕНИЯ
     // =====================================================
 
+    /// 🎯 Загрузка сообщений с информацией о прочтении
     Future<void> _loadMessages(int chatId) async {
         _isLoadingMessages = true;
         _messagesError = null;
@@ -220,9 +241,24 @@ class ChatProvider extends ChangeNotifier {
         try {
             final response = await ApiService.getMessages(chatId);
 
-            if (response.isSuccess) {
-                _messages = response.data ?? [];
-                AppLogger.success('Загружено ${_messages.length} сообщений');
+            if (response.isSuccess && response.data != null) {
+                final result = response.data!;
+
+                _maxReadMessageId = result.maxReadId;
+                _myLastReadMessageId = result.myLastReadId;
+
+                // 🎯 Проставляем isRead для каждого сообщения
+                final myId = _authProvider?.user?.id;
+                _messages = result.messages.map((msg) {
+                    final isOwn = msg.senderId == myId;
+                    final isRead = isOwn && msg.id <= result.maxReadId;
+                    return msg.copyWith(isRead: isRead);
+                }).toList();
+
+                AppLogger.success(
+                    'Загружено ${_messages.length} сообщений '
+                    '(maxRead: ${result.maxReadId}, myLastRead: ${result.myLastReadId})'
+                );
             } else {
                 _messagesError = response.error ?? 'Ошибка загрузки';
             }
@@ -238,6 +274,37 @@ class ChatProvider extends ChangeNotifier {
     Future<void> refreshMessages() async {
         if (_activeChat == null) return;
         await _loadMessages(_activeChat!.id);
+    }
+
+    /// 🎯 Отметить все сообщения в чате как прочитанные
+    Future<void> markAsRead() async {
+        if (_activeChat == null) return;
+        if (_messages.isEmpty) return;
+
+        final lastMessageId = _messages.last.id;
+
+        // Если уже прочитано — не отправляем повторно
+        if (_myLastReadMessageId >= lastMessageId) return;
+
+        _myLastReadMessageId = lastMessageId;
+        notifyListeners();
+
+        try {
+            // Отправляем через HTTP
+            await ApiService.markChatRead(_activeChat!.id, lastMessageId);
+            // И через Socket
+            SocketService.markRead(_activeChat!.id, lastMessageId);
+        } catch (e) {
+            AppLogger.error('Ошибка отметки прочтения', e);
+        }
+    }
+
+    /// 🎯 Количество непрочитанных в чате
+    /// (если последнее сообщение > моего последнего прочитанного)
+    int getUnreadCount(Chat chat) {
+        if (chat.lastMessageId == null) return 0;
+        if (chat.lastMessageId! <= _myLastReadMessageId) return 0;
+        return 1; // TODO: точный подсчёт на сервере
     }
 
     // =====================================================
@@ -316,15 +383,6 @@ class ChatProvider extends ChangeNotifier {
     // 📤 ЗАГРУЗКА ФАЙЛОВ
     // =====================================================
 
-    /// Отправить файл в текущий чат.
-    /// 
-    /// [localPath] — локальный путь к файлу
-    /// [type] — 'image' | 'voice' | 'file'
-    /// 
-    /// ВАЖНО: тип файла передаётся через префикс в тексте:
-    ///   IMG:/api/files/... — картинка
-    ///   VOICE:/api/files/... — голосовое
-    ///   FILE:/api/files/... — обычный файл
     Future<bool> sendFile(String localPath, String type) async {
         if (_activeChat == null) {
             AppLogger.warn('Нет активного чата');
@@ -343,7 +401,6 @@ class ChatProvider extends ChangeNotifier {
         try {
             AppLogger.info('📤 Загрузка файла: $type');
 
-            // 1. Загружаем файл на сервер
             final uploadResponse = await ApiService.uploadFile(localPath, type);
 
             if (!uploadResponse.isSuccess || uploadResponse.data == null) {
@@ -359,7 +416,6 @@ class ChatProvider extends ChangeNotifier {
 
             AppLogger.success('Файл загружен: $uploadedPath (тип: $fileType)');
 
-            // 2. Формируем текст с префиксом типа
             String prefix;
             switch (fileType) {
                 case 'image':
@@ -374,7 +430,6 @@ class ChatProvider extends ChangeNotifier {
 
             final textWithPrefix = '$prefix$uploadedPath';
 
-            // 3. Отправляем сообщение
             SocketService.sendMessage(
                 chatId: _activeChat!.id,
                 text: textWithPrefix,
@@ -425,17 +480,14 @@ class ChatProvider extends ChangeNotifier {
     // 😀 РЕАКЦИИ
     // =====================================================
 
-    /// Добавить реакцию (оптимистично + API)
     Future<bool> addReaction(int messageId, String emoji) async {
         if (_authProvider?.user == null) return false;
         final userId = _authProvider!.user!.id;
         final displayName = _authProvider!.user!.displayName;
 
-        // 1. Оптимистичное обновление локально
         _applyReactionLocally(messageId, userId, emoji, displayName);
 
         try {
-            // 2. Отправляем на сервер
             final response = await ApiService.addReaction(messageId, emoji);
 
             if (response.isSuccess) {
@@ -443,7 +495,6 @@ class ChatProvider extends ChangeNotifier {
                 return true;
             }
 
-            // 3. Если ошибка — откатываем локально
             AppLogger.warn('Ошибка реакции: ${response.error}');
             _removeReactionLocally(messageId, userId, emoji);
             return false;
@@ -454,17 +505,14 @@ class ChatProvider extends ChangeNotifier {
         }
     }
 
-    /// Убрать реакцию (оптимистично + API)
     Future<bool> removeReaction(int messageId, String emoji) async {
         if (_authProvider?.user == null) return false;
         final userId = _authProvider!.user!.id;
         final displayName = _authProvider!.user!.displayName;
 
-        // 1. Оптимистичное обновление локально
         _removeReactionLocally(messageId, userId, emoji);
 
         try {
-            // 2. Отправляем на сервер
             final response = await ApiService.removeReaction(messageId, emoji);
 
             if (response.isSuccess) {
@@ -472,7 +520,6 @@ class ChatProvider extends ChangeNotifier {
                 return true;
             }
 
-            // 3. Если ошибка — откатываем локально
             _applyReactionLocally(messageId, userId, emoji, displayName);
             return false;
         } catch (e) {
@@ -489,10 +536,6 @@ class ChatProvider extends ChangeNotifier {
         return _messages[index].reactions
             .any((r) => r.userId == userId && r.emoji == emoji);
     }
-
-    // =====================================================
-    // 🛠️ ВСПОМОГАТЕЛЬНЫЕ ДЛЯ РЕАКЦИЙ
-    // =====================================================
 
     void _applyReactionLocally(
         int messageId,
@@ -645,6 +688,9 @@ class ChatProvider extends ChangeNotifier {
                 if (!exists) {
                     _messages.add(message);
                     notifyListeners();
+
+                    // 🎯 Автоматически отмечаем как прочитанное
+                    markAsRead();
                 }
             }
 
@@ -737,6 +783,37 @@ class ChatProvider extends ChangeNotifier {
         _removeReactionLocally(messageId, userId, emoji);
     }
 
+    /// 🎯 Кто-то прочитал сообщение
+    void _handleMessageRead(Map<String, dynamic> data) {
+        final chatId = data['chatId'] as int?;
+        final userId = data['userId'] as int?;
+        final messageId = data['messageId'] as int?;
+
+        if (chatId == null || userId == null || messageId == null) return;
+
+        // Если это наш чат — обновляем maxReadMessageId
+        if (_activeChat?.id == chatId) {
+            if (messageId > _maxReadMessageId) {
+                _maxReadMessageId = messageId;
+
+                // Помечаем все СВОИ сообщения до этого ID как прочитанные
+                final myId = _authProvider?.user?.id;
+                if (myId != null) {
+                    for (int i = 0; i < _messages.length; i++) {
+                        final m = _messages[i];
+                        if (m.senderId == myId &&
+                            m.id <= messageId &&
+                            !m.isRead) {
+                            _messages[i] = m.copyWith(isRead: true);
+                        }
+                    }
+                }
+
+                notifyListeners();
+            }
+        }
+    }
+
     // =====================================================
     // 🔄 ПРЕВЬЮ
     // =====================================================
@@ -772,6 +849,7 @@ class ChatProvider extends ChangeNotifier {
         await _messageDeletedSub?.cancel();
         await _reactionAddedSub?.cancel();
         await _reactionRemovedSub?.cancel();
+        await _messageReadSub?.cancel();
         await _userOnlineSub?.cancel();
         await _userOfflineSub?.cancel();
         await _onlineCountSub?.cancel();
@@ -789,6 +867,8 @@ class ChatProvider extends ChangeNotifier {
         _typingTimers.clear();
         _onlineUserIds.clear();
         _onlineCount = 0;
+        _maxReadMessageId = 0;
+        _myLastReadMessageId = 0;
         _replyToMessage = null;
         _chatsError = null;
         _messagesError = null;
@@ -808,6 +888,7 @@ class ChatProvider extends ChangeNotifier {
         _messageDeletedSub?.cancel();
         _reactionAddedSub?.cancel();
         _reactionRemovedSub?.cancel();
+        _messageReadSub?.cancel();
         _userOnlineSub?.cancel();
         _userOfflineSub?.cancel();
         _onlineCountSub?.cancel();

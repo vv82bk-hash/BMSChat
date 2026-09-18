@@ -7,56 +7,26 @@ class Chat {
     // 📋 ОСНОВНЫЕ ПОЛЯ
     // =====================================================
 
-    /// Уникальный ID
     final int id;
-
-    /// Тип чата: 'private', 'general', 'group', 'channel'
     final String type;
-
-    /// Название (для групп/каналов)
     final String? name;
-
-    /// Отображаемое имя (для личных — имя собеседника)
     final String? displayName;
-
-    /// Описание
     final String? description;
-
-    /// Путь к аватарке
     final String? avatar;
-
-    /// Кто создал чат
     final int? createdBy;
-
-    /// Активен ли чат
     final bool isActive;
-
-    /// Когда создан
     final DateTime? createdAt;
-
-    /// Когда последнее изменение
     final DateTime? updatedAt;
 
     // =====================================================
     // 📊 ДАННЫЕ О ЧАТЕ
     // =====================================================
 
-    /// Роль текущего пользователя в этом чате ('admin' или 'member')
     final String? myRole;
-
-    /// Сколько участников
     final int membersCount;
-
-    /// ID последнего сообщения
     final int? lastMessageId;
-
-    /// Текст последнего сообщения
     final String? lastMessageText;
-
-    /// Когда отправлено последнее сообщение
     final DateTime? lastMessageAt;
-
-    /// Список участников (только если загружен)
     final List<ChatMember> members;
 
     // =====================================================
@@ -179,50 +149,40 @@ class Chat {
     // 🛠️ ГЕТТЕРЫ
     // =====================================================
 
-    /// Личный чат?
     bool get isPrivate => type == 'private';
-
-    /// Общий чат команды?
     bool get isGeneral => type == 'general';
-
-    /// Групповой чат?
     bool get isGroup => type == 'group';
-
-    /// Канал?
     bool get isChannel => type == 'channel';
 
-    /// Текущий пользователь — админ чата?
     bool get isAdmin => myRole == 'admin';
-
-    /// Текущий пользователь — участник?
     bool get isMember => myRole == 'member';
 
     /// Отображаемое имя чата
     String get title {
-        // 1. Для личных — display_name (имя собеседника)
         if (isPrivate && displayName != null && displayName!.isNotEmpty) {
             return displayName!;
         }
-
-        // 2. Для остальных — name
         if (name != null && name!.isNotEmpty) return name!;
-
-        // 3. Fallback
         if (isGeneral) return 'Общий чат';
         if (isPrivate) return 'Личный чат';
         return 'Чат #$id';
     }
 
-    /// Иконка чата (эмодзи)
-    /// 
-    /// Общий чат → '🖼️' (в UI заменим на картинку logo.png)
-    /// Личные → иконка как у канала/группы: '📢'
+    // =====================================================
+    // 🎨 ИКОНКА ЧАТА
+    // =====================================================
+    //   general  → 🖼️ (в UI = логотип)
+    //   private  → 🤙 (шака)
+    //   group    → 📢
+    //   channel  → 📢
+    // =====================================================
+
     String get icon {
         switch (type) {
             case 'general':
-                return '🖼️'; // в UI заменим на картинку logo.png
+                return '🖼️';
             case 'private':
-                return '📢'; // как у канала
+                return '🤙';   // ← изменено с '📢'
             case 'group':
                 return '📢';
             case 'channel':
@@ -250,7 +210,7 @@ class Chat {
         return text;
     }
 
-    /// Время последнего сообщения в формате «14:30»
+    /// Время последнего сообщения
     String get lastMessageTime {
         if (lastMessageAt == null) return '';
 

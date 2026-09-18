@@ -1,5 +1,5 @@
 // =====================================================
-// 💬 BMSChat — ЭКРАН ЧАТА
+// 💬 BMSChat — ЭКРАН ЧАТА (С ОТМЕТКОЙ ПРОЧТЕНИЯ)
 // =====================================================
 
 import 'package:flutter/material.dart';
@@ -33,19 +33,19 @@ class _ChatScreenState extends State<ChatScreen> {
     final _imagePicker = ImagePicker();
     bool _isTyping = false;
 
-    /// Флаг: был ли уже автоскролл при открытии
     bool _initialScrollDone = false;
-
-    /// Предыдущее количество сообщений (для отслеживания новых)
     int _lastMessageCount = 0;
+
+    /// 🎯 ID последнего прочитанного ДО открытия чата
+    int _lastReadBeforeOpen = 0;
 
     @override
     void initState() {
         super.initState();
 
-        // 📜 Слушаем изменения ChatProvider
         WidgetsBinding.instance.addPostFrameCallback((_) {
             final chat = Provider.of<ChatProvider>(context, listen: false);
+            _lastReadBeforeOpen = chat.myLastReadMessageId;
             chat.addListener(_onChatChanged);
         });
     }
@@ -74,14 +74,20 @@ class _ChatScreenState extends State<ChatScreen> {
             _initialScrollDone = true;
             _lastMessageCount = chat.messages.length;
 
-            // Ждём отрисовку списка
             WidgetsBinding.instance.addPostFrameCallback((_) {
-                _scrollToBottom(jump: true);
+                if (_lastReadBeforeOpen > 0 &&
+                    chat.messages.any((m) => m.id > _lastReadBeforeOpen)) {
+                    _scrollToFirstUnread(_lastReadBeforeOpen);
+                } else {
+                    _scrollToBottom(jump: true);
+                }
             });
+
+            chat.markAsRead();
             return;
         }
 
-        // 2️⃣ Новое сообщение — скроллим, если были у низа
+        // 2️⃣ Новое сообщение
         if (chat.messages.length > _lastMessageCount) {
             final position = _scrollController.hasClients
                 ? _scrollController.position
@@ -94,6 +100,8 @@ class _ChatScreenState extends State<ChatScreen> {
             if (isNearBottom) {
                 _scrollToBottom();
             }
+
+            chat.markAsRead();
         }
     }
 
@@ -127,8 +135,9 @@ class _ChatScreenState extends State<ChatScreen> {
         try {
             final XFile? image = await _imagePicker.pickImage(
                 source: ImageSource.gallery,
-                imageQuality: 70,
-                maxWidth: 1920,
+                imageQuality: 50,
+                maxWidth: 1280,
+                maxHeight: 1280,
             );
 
             if (image == null) return;
@@ -192,6 +201,36 @@ class _ChatScreenState extends State<ChatScreen> {
         });
     }
 
+    /// 🎯 Скролл к первому непрочитанному сообщению
+    void _scrollToFirstUnread(int lastReadId) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!_scrollController.hasClients) return;
+
+            final chat = Provider.of<ChatProvider>(context, listen: false);
+
+            final firstUnreadIndex = chat.messages.indexWhere(
+                (m) => m.id > lastReadId,
+            );
+
+            if (firstUnreadIndex < 0) {
+                _scrollToBottom(jump: true);
+                return;
+            }
+
+            const estimatedHeight = 80.0;
+            final targetOffset = firstUnreadIndex * estimatedHeight;
+
+            _scrollController.animateTo(
+                targetOffset.clamp(
+                    0.0,
+                    _scrollController.position.maxScrollExtent,
+                ),
+                duration: const Duration(milliseconds: 500),
+                curve: Curves.easeOutCubic,
+            );
+        });
+    }
+
     void _showError(String message) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -243,19 +282,67 @@ class _ChatScreenState extends State<ChatScreen> {
         return Scaffold(
             backgroundColor: RastaTheme.background,
             appBar: AppBar(
-                title: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                elevation: 4,
+                shadowColor: Colors.black.withValues(alpha: 0.5),
+                title: Row(
                     children: [
-                        Text(
-                            activeChat?.title ?? 'Чат',
-                            style: const TextStyle(fontSize: 16),
+                        if (activeChat != null && activeChat.useLogoImage) ...[
+                            Container(
+                                width: 38,
+                                height: 38,
+                                decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    boxShadow: [
+                                        BoxShadow(
+                                            color: RastaTheme.rastaYellow
+                                                .withValues(alpha: 0.4),
+                                            blurRadius: 10,
+                                            spreadRadius: 1,
+                                        ),
+                                    ],
+                                ),
+                                child: ClipOval(
+                                    child: Image.asset(
+                                        'assets/images/logo.png',
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (context, error, stackTrace) {
+                                            return Container(
+                                                color: RastaTheme.surfaceSecondary,
+                                                child: const Center(
+                                                    child: Text('🎯',
+                                                        style: TextStyle(fontSize: 20)),
+                                                ),
+                                            );
+                                        },
+                                    ),
+                                ),
+                            ),
+                            const SizedBox(width: 10),
+                        ],
+
+                        Expanded(
+                            child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                    Text(
+                                        activeChat?.title ?? 'Чат',
+                                        style: const TextStyle(
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.w700,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                    ),
+                                    if (activeChat != null) _buildSubtitle(chat),
+                                ],
+                            ),
                         ),
-                        if (activeChat != null) _buildSubtitle(chat),
                     ],
                 ),
                 actions: [
                     IconButton(
-                        icon: const Icon(Icons.people_outline),
+                        icon: const Icon(Icons.people_outline, size: 26),
                         tooltip: 'Участники',
                         onPressed: _openUsers,
                     ),
@@ -273,7 +360,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 ),
                             )
                             : chat.messages.isEmpty
-                                ? _buildEmptyState()
+                                ? _buildEmptyState(activeChat?.useLogoImage ?? false)
                                 : ListView.builder(
                                     controller: _scrollController,
                                     padding: const EdgeInsets.symmetric(
@@ -325,7 +412,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     '${chat.typingUser} печатает...',
                     key: ValueKey('typing_${chat.typingUser}'),
                     style: const TextStyle(
-                        fontSize: 11,
+                        fontSize: 13,
                         fontStyle: FontStyle.italic,
                         color: RastaTheme.rastaYellow,
                     ),
@@ -340,7 +427,7 @@ class _ChatScreenState extends State<ChatScreen> {
             return const Text(
                 'личный чат',
                 style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 13,
                     color: RastaTheme.textMuted,
                 ),
             );
@@ -352,7 +439,7 @@ class _ChatScreenState extends State<ChatScreen> {
         return Text(
             '$membersCount участников, $onlineCount онлайн',
             style: const TextStyle(
-                fontSize: 11,
+                fontSize: 13,
                 color: RastaTheme.textMuted,
             ),
         );
@@ -361,17 +448,38 @@ class _ChatScreenState extends State<ChatScreen> {
     // ============================================
     // 📭 НЕТ СООБЩЕНИЙ
     // ============================================
-    Widget _buildEmptyState() {
+    Widget _buildEmptyState(bool isGeneral) {
         return Center(
             child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                    const Text('💬', style: TextStyle(fontSize: 64)),
-                    const SizedBox(height: 16),
+                    if (isGeneral)
+                        Opacity(
+                            opacity: 0.7,
+                            child: ClipOval(
+                                child: Image.asset(
+                                    'assets/images/logo.png',
+                                    width: 120,
+                                    height: 120,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (context, error, stackTrace) {
+                                        return const Text(
+                                            '💬',
+                                            style: TextStyle(fontSize: 64),
+                                        );
+                                    },
+                                ),
+                            ),
+                        )
+                    else
+                        const Text('💬', style: TextStyle(fontSize: 64)),
+
+                    const SizedBox(height: 20),
+
                     const Text(
                         'Нет сообщений',
                         style: TextStyle(
-                            fontSize: 18,
+                            fontSize: 20,
                             fontWeight: FontWeight.w600,
                             color: RastaTheme.textPrimary,
                         ),
@@ -380,7 +488,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     Text(
                         'Начните переписку первым!',
                         style: TextStyle(
-                            fontSize: 14,
+                            fontSize: 15,
                             color: RastaTheme.textMuted.withValues(alpha: 0.8),
                         ),
                     ),
@@ -397,7 +505,7 @@ class _ChatScreenState extends State<ChatScreen> {
         if (replyTo == null) return const SizedBox.shrink();
 
         return Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             decoration: const BoxDecoration(
                 color: RastaTheme.surfaceSecondary,
                 border: Border(
@@ -416,7 +524,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 Text(
                                     'Ответ ${replyTo.senderName ?? ""}',
                                     style: const TextStyle(
-                                        fontSize: 12,
+                                        fontSize: 13,
                                         fontWeight: FontWeight.w700,
                                         color: RastaTheme.rastaYellow,
                                     ),
@@ -425,7 +533,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 Text(
                                     replyTo.displayText,
                                     style: const TextStyle(
-                                        fontSize: 13,
+                                        fontSize: 14,
                                         color: RastaTheme.textMuted,
                                     ),
                                     maxLines: 1,
@@ -438,7 +546,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         icon: const Icon(
                             Icons.close,
                             color: RastaTheme.textMuted,
-                            size: 20,
+                            size: 22,
                         ),
                         onPressed: () => chat.clearReplyTo(),
                     ),
@@ -465,6 +573,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         icon: const Icon(
                             Icons.attach_file,
                             color: RastaTheme.rastaYellow,
+                            size: 26,
                         ),
                         onPressed: _pickImage,
                         tooltip: 'Фото',
@@ -480,39 +589,53 @@ class _ChatScreenState extends State<ChatScreen> {
                             textInputAction: TextInputAction.send,
                             style: const TextStyle(
                                 color: RastaTheme.textPrimary,
-                                fontSize: 15,
+                                fontSize: 16,
                             ),
                             decoration: InputDecoration(
                                 hintText: 'Сообщение...',
                                 hintStyle: const TextStyle(
                                     color: RastaTheme.textMuted,
+                                    fontSize: 16,
                                 ),
                                 filled: true,
                                 fillColor: RastaTheme.background,
                                 contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 10,
+                                    horizontal: 18,
+                                    vertical: 12,
                                 ),
                                 border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(24),
+                                    borderRadius: BorderRadius.circular(26),
                                     borderSide: BorderSide.none,
                                 ),
                             ),
                         ),
                     ),
 
-                    const SizedBox(width: 4),
+                    const SizedBox(width: 6),
 
-                    CircleAvatar(
-                        radius: 24,
-                        backgroundColor: RastaTheme.rastaYellow,
-                        child: IconButton(
-                            icon: const Icon(
-                                Icons.send,
-                                color: Colors.black,
-                                size: 20,
+                    Container(
+                        decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                                BoxShadow(
+                                    color: RastaTheme.rastaYellow
+                                        .withValues(alpha: 0.4),
+                                    blurRadius: 10,
+                                    spreadRadius: 1,
+                                ),
+                            ],
+                        ),
+                        child: CircleAvatar(
+                            radius: 26,
+                            backgroundColor: RastaTheme.rastaYellow,
+                            child: IconButton(
+                                icon: const Icon(
+                                    Icons.send,
+                                    color: Colors.black,
+                                    size: 22,
+                                ),
+                                onPressed: _sendMessage,
                             ),
-                            onPressed: _sendMessage,
                         ),
                     ),
                 ],
@@ -538,7 +661,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     const Icon(
                         Icons.lock_outline,
                         color: RastaTheme.textMuted,
-                        size: 20,
+                        size: 22,
                     ),
                     const SizedBox(width: 8),
                     Flexible(
@@ -546,7 +669,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             reason ?? 'Только чтение',
                             style: const TextStyle(
                                 color: RastaTheme.textMuted,
-                                fontSize: 14,
+                                fontSize: 15,
                             ),
                             textAlign: TextAlign.center,
                         ),
@@ -558,6 +681,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
     // ============================================
     // 😀 ВЫБОР РЕАКЦИИ / ДЕЙСТВИЯ
+    // ============================================
+    // ✅ ИСПРАВЛЕНО: isScrollControlled + SingleChildScrollView
     // ============================================
     void _showReactionPicker(
         BuildContext context,
@@ -576,100 +701,107 @@ class _ChatScreenState extends State<ChatScreen> {
         showModalBottomSheet(
             context: context,
             backgroundColor: Colors.transparent,
+            isScrollControlled: true,   // ✅ разрешает панели быть выше половины экрана
             builder: (bottomSheetContext) {
-                return Container(
-                    padding: const EdgeInsets.only(
-                        left: 16,
-                        right: 16,
-                        top: 16,
-                        bottom: 32,
-                    ),
-                    child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                            ReactionPicker(
-                                myReactions: myReactions,
-                                onSelect: (emoji) async {
-                                    Navigator.pop(bottomSheetContext);
+                return SingleChildScrollView(   // ✅ включает прокрутку
+                    child: Container(
+                        padding: EdgeInsets.only(
+                            left: 16,
+                            right: 16,
+                            top: 16,
+                            // ✅ учитывает системную навигацию
+                            bottom: 16 + MediaQuery.of(bottomSheetContext).padding.bottom,
+                        ),
+                        child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                                ReactionPicker(
+                                    myReactions: myReactions,
+                                    onSelect: (emoji) async {
+                                        Navigator.pop(bottomSheetContext);
 
-                                    if (myReactions.contains(emoji)) {
-                                        await chat.removeReaction(
-                                            message.id,
-                                            emoji,
-                                        );
-                                    } else {
-                                        await chat.addReaction(
-                                            message.id,
-                                            emoji,
-                                        );
-                                    }
-                                },
-                            ),
-
-                            const SizedBox(height: 12),
-
-                            Container(
-                                decoration: BoxDecoration(
-                                    color: RastaTheme.surface,
-                                    borderRadius: BorderRadius.circular(16),
+                                        if (myReactions.contains(emoji)) {
+                                            await chat.removeReaction(
+                                                message.id,
+                                                emoji,
+                                            );
+                                        } else {
+                                            await chat.addReaction(
+                                                message.id,
+                                                emoji,
+                                            );
+                                        }
+                                    },
                                 ),
-                                child: Column(
-                                    children: [
-                                        ListTile(
-                                            leading: const Icon(
-                                                Icons.reply,
-                                                color: RastaTheme.rastaYellow,
-                                            ),
-                                            title: const Text(
-                                                'Ответить',
-                                                style: TextStyle(
-                                                    color: RastaTheme.textPrimary,
-                                                ),
-                                            ),
-                                            onTap: () {
-                                                Navigator.pop(bottomSheetContext);
-                                                chat.setReplyTo(message);
-                                            },
-                                        ),
 
-                                        if (isOwn) ...[
+                                const SizedBox(height: 12),
+
+                                Container(
+                                    decoration: BoxDecoration(
+                                        color: RastaTheme.surface,
+                                        borderRadius: BorderRadius.circular(16),
+                                    ),
+                                    child: Column(
+                                        children: [
                                             ListTile(
                                                 leading: const Icon(
-                                                    Icons.edit,
+                                                    Icons.reply,
                                                     color: RastaTheme.rastaYellow,
                                                 ),
                                                 title: const Text(
-                                                    'Редактировать',
+                                                    'Ответить',
                                                     style: TextStyle(
                                                         color: RastaTheme.textPrimary,
+                                                        fontSize: 16,
                                                     ),
                                                 ),
                                                 onTap: () {
                                                     Navigator.pop(bottomSheetContext);
-                                                    _editMessage(message);
+                                                    chat.setReplyTo(message);
                                                 },
                                             ),
-                                            ListTile(
-                                                leading: const Icon(
-                                                    Icons.delete_outline,
-                                                    color: RastaTheme.error,
+
+                                            if (isOwn) ...[
+                                                ListTile(
+                                                    leading: const Icon(
+                                                        Icons.edit,
+                                                        color: RastaTheme.rastaYellow,
+                                                    ),
+                                                    title: const Text(
+                                                        'Редактировать',
+                                                        style: TextStyle(
+                                                            color: RastaTheme.textPrimary,
+                                                            fontSize: 16,
+                                                        ),
+                                                    ),
+                                                    onTap: () {
+                                                        Navigator.pop(bottomSheetContext);
+                                                        _editMessage(message);
+                                                    },
                                                 ),
-                                                title: const Text(
-                                                    'Удалить',
-                                                    style: TextStyle(
+                                                ListTile(
+                                                    leading: const Icon(
+                                                        Icons.delete_outline,
                                                         color: RastaTheme.error,
                                                     ),
+                                                    title: const Text(
+                                                        'Удалить',
+                                                        style: TextStyle(
+                                                            color: RastaTheme.error,
+                                                            fontSize: 16,
+                                                        ),
+                                                    ),
+                                                    onTap: () {
+                                                        Navigator.pop(bottomSheetContext);
+                                                        _deleteMessage(message);
+                                                    },
                                                 ),
-                                                onTap: () {
-                                                    Navigator.pop(bottomSheetContext);
-                                                    _deleteMessage(message);
-                                                },
-                                            ),
+                                            ],
                                         ],
-                                    ],
+                                    ),
                                 ),
-                            ),
-                        ],
+                            ],
+                        ),
                     ),
                 );
             },
@@ -688,14 +820,20 @@ class _ChatScreenState extends State<ChatScreen> {
                 backgroundColor: RastaTheme.surface,
                 title: const Text(
                     'Редактировать',
-                    style: TextStyle(color: RastaTheme.textPrimary),
+                    style: TextStyle(
+                        color: RastaTheme.textPrimary,
+                        fontSize: 20,
+                    ),
                 ),
                 content: TextField(
                     controller: controller,
                     maxLines: 5,
                     minLines: 1,
                     autofocus: true,
-                    style: const TextStyle(color: RastaTheme.textPrimary),
+                    style: const TextStyle(
+                        color: RastaTheme.textPrimary,
+                        fontSize: 16,
+                    ),
                     decoration: const InputDecoration(
                         hintText: 'Новый текст...',
                         hintStyle: TextStyle(color: RastaTheme.textMuted),
@@ -706,7 +844,10 @@ class _ChatScreenState extends State<ChatScreen> {
                         onPressed: () => Navigator.pop(context),
                         child: const Text(
                             'Отмена',
-                            style: TextStyle(color: RastaTheme.textMuted),
+                            style: TextStyle(
+                                color: RastaTheme.textMuted,
+                                fontSize: 16,
+                            ),
                         ),
                     ),
                     TextButton(
@@ -714,7 +855,10 @@ class _ChatScreenState extends State<ChatScreen> {
                             Navigator.pop(context, controller.text.trim()),
                         child: const Text(
                             'Сохранить',
-                            style: TextStyle(color: RastaTheme.rastaYellow),
+                            style: TextStyle(
+                                color: RastaTheme.rastaYellow,
+                                fontSize: 16,
+                            ),
                         ),
                     ),
                 ],
@@ -743,25 +887,37 @@ class _ChatScreenState extends State<ChatScreen> {
                 backgroundColor: RastaTheme.surface,
                 title: const Text(
                     'Удалить сообщение?',
-                    style: TextStyle(color: RastaTheme.textPrimary),
+                    style: TextStyle(
+                        color: RastaTheme.textPrimary,
+                        fontSize: 20,
+                    ),
                 ),
                 content: const Text(
                     'Сообщение будет помечено как удалённое.',
-                    style: TextStyle(color: RastaTheme.textSecondary),
+                    style: TextStyle(
+                        color: RastaTheme.textSecondary,
+                        fontSize: 15,
+                    ),
                 ),
                 actions: [
                     TextButton(
                         onPressed: () => Navigator.pop(context, false),
                         child: const Text(
                             'Отмена',
-                            style: TextStyle(color: RastaTheme.textMuted),
+                            style: TextStyle(
+                                color: RastaTheme.textMuted,
+                                fontSize: 16,
+                            ),
                         ),
                     ),
                     TextButton(
                         onPressed: () => Navigator.pop(context, true),
                         child: const Text(
                             'Удалить',
-                            style: TextStyle(color: RastaTheme.error),
+                            style: TextStyle(
+                                color: RastaTheme.error,
+                                fontSize: 16,
+                            ),
                         ),
                     ),
                 ],
