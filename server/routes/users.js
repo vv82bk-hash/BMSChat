@@ -6,6 +6,8 @@
 //                   (approve, assign-commander, roles/:roleId)
 //   🔒 2026-09-19 — запрет смены роли для неподтверждённых
 //                   (set-role, roles/:roleId)
+//   🔵 2026-09-19 — при роли «Новобранец» is_approved = false
+//                   (make-recruit, set-role, roles/:roleId)
 // =====================================================
 
 const express = require('express');
@@ -124,10 +126,6 @@ async function canManageTarget(actorId, targetId) {
 
 /**
  * 🔒 Проверяет, что пользователь подтверждён.
- * 
- * Возвращает { approved: boolean, isApprovedRaw: boolean }.
- * Используется в эндпоинтах смены роли, чтобы нельзя было
- * перевести неподтверждённого новобранца в «Бойца» напрямую.
  */
 async function getUserApprovedStatus(userId) {
     const result = await pool.query(
@@ -136,6 +134,15 @@ async function getUserApprovedStatus(userId) {
     );
     if (result.rows.length === 0) return null;
     return result.rows[0].is_approved === true;
+}
+
+/**
+ * 🔵 Сбрасывает is_approved в false.
+ * Используется при понижении до «Новобранца» — Новобранец
+ * всегда должен требовать подтверждения.
+ */
+async function unapproveUser(userId) {
+    await pool.query('UPDATE users SET is_approved = FALSE WHERE id = $1', [userId]);
 }
 
 // =====================================================
@@ -527,6 +534,9 @@ router.post(
                 return res.status(404).json({ error: 'Пользователь не найден' });
             }
 
+            // 🔵 ПАТЧ 4: Новобранец всегда ждёт подтверждения
+            await unapproveUser(userId);
+
             await clearUserRoles(userId);
             const recruitRoleId = await ensureRole('Новобранец');
             await assignRoleToUser(userId, recruitRoleId, req.user.id);
@@ -534,6 +544,7 @@ router.post(
             logger.info('Пользователь понижен до новобранца', {
                 userId,
                 by: req.user.id,
+                isApproved: false,
             });
 
             res.json({
@@ -594,6 +605,11 @@ router.post(
                 });
             }
 
+            // 🔵 ПАТЧ 5: если ставим «Новобранец» — сбрасываем подтверждение
+            if (roleName === 'Новобранец') {
+                await unapproveUser(userId);
+            }
+
             await clearUserRoles(userId);
             await assignRoleToUser(userId, roleResult.rows[0].id, req.user.id);
 
@@ -647,13 +663,19 @@ router.post(
                 return res.status(404).json({ error: 'Роль не найдена' });
             }
 
+            const roleName = roleResult.rows[0].name;
+
             // 🔒 ЗАЩИТА is_approved: неподтверждённому можно только «Новобранец»
             const isApproved = await getUserApprovedStatus(userId);
-            const roleName = roleResult.rows[0].name;
             if (!isApproved && roleName !== 'Новобранец') {
                 return res.status(400).json({
                     error: 'Сначала подтвердите пользователя',
                 });
+            }
+
+            // 🔵 ПАТЧ 6: если ставим «Новобранец» — сбрасываем подтверждение
+            if (roleName === 'Новобранец') {
+                await unapproveUser(userId);
             }
 
             // 🎯 ПАТЧ 3: заменяем все роли на указанную
