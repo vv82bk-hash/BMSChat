@@ -1,6 +1,12 @@
 // =====================================================
 // 👥 BMSChat — РОУТЫ ПОЛЬЗОВАТЕЛЕЙ (PostgreSQL)
 // =====================================================
+// 🎯 ПАТЧИ (2026-09-19):
+//   • approve: clearUserRoles перед assignRoleToUser
+//   • assign-commander: clearUserRoles перед assignRoleToUser
+//   • roles/:roleId (POST): clearUserRoles перед assignRoleToUser
+//   Раньше роли накапливались — теперь заменяются.
+// =====================================================
 
 const express = require('express');
 const router = express.Router();
@@ -100,30 +106,16 @@ async function isUserAdmin(userId) {
 
 /**
  * Проверяет, может ли actor управлять target.
- * 
- * Правило:
- *   - Нельзя управлять учётной записью администратора,
- *     если ты сам — не этот администратор.
- * 
- * @param {number} actorId — ID того, кто выполняет действие
- * @param {number} targetId — ID того, над кем действие
- * @returns {Promise<{allowed: boolean, reason?: string}>}
  */
 async function canManageTarget(actorId, targetId) {
-    // Если actor и target — один и тот же человек — разрешаем
     if (actorId === targetId) return { allowed: true };
 
-    // Проверяем, является ли target администратором
     const targetIsAdmin = await isUserAdmin(targetId);
 
     if (!targetIsAdmin) {
-        // target — не админ → можно управлять
         return { allowed: true };
     }
 
-    // target — админ. Разрешаем только если actor сам является этим админом
-    // (т.е. actorId === targetId — уже проверено выше)
-    // Значит, если actor !== target и target — админ → запрещено
     return {
         allowed: false,
         reason: 'Нельзя управлять учётной записью администратора',
@@ -271,8 +263,9 @@ router.post(
                 WHERE id = $2
             `, [req.user.id, userId]);
 
-            // Роль «Боец»
+            // 🎯 ПАТЧ 1: заменяем все роли на одну «Боец»
             const soldierRoleId = await ensureRole('Боец');
+            await clearUserRoles(userId);
             await assignRoleToUser(userId, soldierRoleId, req.user.id);
 
             logger.success('Пользователь подтверждён', {
@@ -406,7 +399,9 @@ router.post(
                 return res.status(400).json({ error: 'Пользователь уже командир' });
             }
 
+            // 🎯 ПАТЧ 2: заменяем все роли на одну «Командир»
             const commanderRoleId = await ensureRole('Командир');
+            await clearUserRoles(userId);
             await assignRoleToUser(userId, commanderRoleId, req.user.id);
 
             logger.success('Командир назначен', {
@@ -628,6 +623,8 @@ router.post(
                 return res.status(404).json({ error: 'Роль не найдена' });
             }
 
+            // 🎯 ПАТЧ 3: заменяем все роли на указанную
+            await clearUserRoles(userId);
             await assignRoleToUser(userId, roleId, req.user.id);
 
             logger.success('Роль назначена', {
