@@ -117,9 +117,10 @@ class MessageBubble extends StatelessWidget {
                             else
                                 _buildText(message, isOwn),
 
+                            // Время + галочки + метки
                             Padding(
                                 padding: EdgeInsets.only(
-                                    top: 4,
+                                    top: 6,
                                     left: message.isImageMessage ? 8 : 0,
                                     right: message.isImageMessage ? 8 : 0,
                                     bottom: message.isImageMessage ? 6 : 0,
@@ -145,16 +146,18 @@ class MessageBubble extends StatelessWidget {
                                         Text(
                                             message.formattedTime,
                                             style: TextStyle(
-                                                fontSize: 10,
+                                                fontSize: 11,
                                                 fontWeight: FontWeight.w500,
                                                 color: isOwn &&
                                                         !message.isImageMessage
-                                                    ? Colors.black54
+                                                    ? Colors.black87
                                                     : RastaTheme.textMuted,
                                             ),
                                         ),
+
+                                        // 🎯 ГАЛОЧКИ — только для своих
                                         if (isOwn) ...[
-                                            const SizedBox(width: 4),
+                                            const SizedBox(width: 8),
                                             _buildReadIcon(
                                                 isImage: message.isImageMessage,
                                             ),
@@ -216,17 +219,23 @@ class MessageBubble extends StatelessWidget {
     // =====================================================
     // 🎯 ГАЛОЧКА ПРОЧТЕНИЯ
     // =====================================================
+    //   ✓  — отправлено (серое)
+    //   ✓✓ — прочитано (ЯРКО-ЗЕЛЁНОЕ)
+    // =====================================================
     Widget _buildReadIcon({required bool isImage}) {
         final Color color;
         if (isImage) {
             color = Colors.white;
         } else {
-            color = message.isRead ? Colors.black87 : Colors.black54;
+            // 🎯 ЯРКО-ЗЕЛЁНЫЙ для прочитанных
+            color = message.isRead
+                ? const Color(0xFF00E676)   // Material Green A400
+                : Colors.black45;            // отправлено — серое
         }
 
         return Icon(
             message.isRead ? Icons.done_all : Icons.done,
-            size: 14,
+            size: 18,
             color: color,
         );
     }
@@ -304,9 +313,6 @@ class MessageBubble extends StatelessWidget {
 // =====================================================
 // 📷 ПРОПОРЦИОНАЛЬНАЯ КАРТИНКА
 // =====================================================
-// Загружает картинку, узнаёт её размеры через ImageStream,
-// и показывает с сохранением пропорций.
-// =====================================================
 
 class _ProportionalImage extends StatefulWidget {
     final String url;
@@ -324,11 +330,8 @@ class _ProportionalImage extends StatefulWidget {
 }
 
 class _ProportionalImageState extends State<_ProportionalImage> {
-    /// Итоговые размеры
     double? _displayWidth;
     double? _displayHeight;
-
-    /// Ошибка загрузки
     bool _hasError = false;
 
     @override
@@ -348,9 +351,6 @@ class _ProportionalImageState extends State<_ProportionalImage> {
         }
     }
 
-    // =====================================================
-    // 🔍 ЗАГРУЗКА И РАСЧЁТ РАЗМЕРОВ
-    // =====================================================
     void _resolveImage() {
         final ImageProvider provider = NetworkImage(widget.url);
         final ImageStream stream = provider.resolve(ImageConfiguration.empty);
@@ -368,18 +368,14 @@ class _ProportionalImageState extends State<_ProportionalImage> {
                     return;
                 }
 
-                // Пропорции
                 final aspectRatio = imageWidth / imageHeight;
 
-                // Начальная ширина — не больше maxWidth
                 double width = imageWidth > widget.maxWidth
                     ? widget.maxWidth
                     : imageWidth;
 
-                // Высота по пропорциям
                 double height = width / aspectRatio;
 
-                // Если высота больше maxHeight → корректируем
                 if (height > widget.maxHeight) {
                     height = widget.maxHeight;
                     width = height * aspectRatio;
@@ -399,22 +395,16 @@ class _ProportionalImageState extends State<_ProportionalImage> {
         stream.addListener(listener);
     }
 
-    // =====================================================
-    // 🎨 ОТРИСОВКА
-    // =====================================================
     @override
     Widget build(BuildContext context) {
-        // Ошибка
         if (_hasError) {
             return _buildError();
         }
 
-        // Ещё загружается
         if (_displayWidth == null || _displayHeight == null) {
             return _buildLoading();
         }
 
-        // Готово — показываем с правильными пропорциями
         return Image.network(
             widget.url,
             width: _displayWidth,
@@ -429,9 +419,6 @@ class _ProportionalImageState extends State<_ProportionalImage> {
         );
     }
 
-    // =====================================================
-    // ⏳ ЗАГРУЗКА
-    // =====================================================
     Widget _buildLoading() {
         return Container(
             width: widget.maxWidth,
@@ -450,9 +437,6 @@ class _ProportionalImageState extends State<_ProportionalImage> {
         );
     }
 
-    // =====================================================
-    // ❌ ОШИБКА
-    // =====================================================
     Widget _buildError() {
         return Container(
             width: widget.maxWidth,

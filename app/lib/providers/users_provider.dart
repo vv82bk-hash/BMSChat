@@ -3,6 +3,12 @@
 // =====================================================
 // Управляет списком пользователей + заявками.
 // 👑 Подписан на Socket.IO события new_recruit, pending_count.
+//
+// 🎯 ОБРАБОТКА ОШИБОК:
+//   • _handleAction() — единая точка обработки ответов API
+//   • _error заполняется реальным текстом от сервера + статусом
+//   • Все ошибки логируются через AppLogger.warn
+//   • try/catch больше не проглатывает исключения
 // =====================================================
 
 import 'dart:async';
@@ -168,18 +174,45 @@ class UsersProvider extends ChangeNotifier {
     // 🎭 ДЕЙСТВИЯ
     // =====================================================
 
+    /// 🎯 Единая точка обработки ответа API на действия с пользователем.
+    /// 
+    /// Что делает:
+    ///   • при успехе — очищает _error, опционально перезагружает список
+    ///   • при ошибке — сохраняет РЕАЛЬНЫЙ текст от сервера в _error,
+    ///     логирует через AppLogger.warn, уведомляет слушателей
+    /// 
+    /// Возвращает true при успехе.
+    Future<bool> _handleAction(
+        String actionName,
+        ApiResponse<void> response, {
+        bool reloadUsers = true,
+    }) async {
+        if (response.isSuccess) {
+            _error = null;
+            if (reloadUsers) await loadUsers();
+            return true;
+        }
+
+        // 🎯 Сохраняем реальную ошибку для UI
+        final rawError = response.error ?? 'неизвестная ошибка';
+        _error = '[$actionName] $rawError (код ${response.statusCode})';
+        AppLogger.warn('❌ $actionName не удалось: $_error');
+        notifyListeners();
+        return false;
+    }
+
     Future<bool> approveUser(int userId) async {
         try {
             final response = await ApiService.approveUser(userId);
             if (response.isSuccess) {
                 _pendingUsers.removeWhere((u) => u.id == userId);
                 _pendingCount = _pendingUsers.length;
-                await loadUsers();
-                return true;
             }
-            return false;
+            return await _handleAction('Подтверждение', response);
         } catch (e) {
             AppLogger.error('Ошибка подтверждения', e);
+            _error = '[Подтверждение] $e';
+            notifyListeners();
             return false;
         }
     }
@@ -190,11 +223,16 @@ class UsersProvider extends ChangeNotifier {
             if (response.isSuccess) {
                 _pendingUsers.removeWhere((u) => u.id == userId);
                 _pendingCount = _pendingUsers.length;
-                notifyListeners();
-                return true;
             }
-            return false;
+            return await _handleAction(
+                'Отклонение',
+                response,
+                reloadUsers: false,
+            );
         } catch (e) {
+            AppLogger.error('Ошибка отклонения', e);
+            _error = '[Отклонение] $e';
+            notifyListeners();
             return false;
         }
     }
@@ -202,12 +240,11 @@ class UsersProvider extends ChangeNotifier {
     Future<bool> assignCommander(int userId) async {
         try {
             final response = await ApiService.assignCommander(userId);
-            if (response.isSuccess) {
-                await loadUsers();
-                return true;
-            }
-            return false;
+            return await _handleAction('Назначение командиром', response);
         } catch (e) {
+            AppLogger.error('Ошибка назначения командиром', e);
+            _error = '[Назначение командиром] $e';
+            notifyListeners();
             return false;
         }
     }
@@ -215,12 +252,11 @@ class UsersProvider extends ChangeNotifier {
     Future<bool> removeCommander(int userId) async {
         try {
             final response = await ApiService.removeCommander(userId);
-            if (response.isSuccess) {
-                await loadUsers();
-                return true;
-            }
-            return false;
+            return await _handleAction('Снятие командира', response);
         } catch (e) {
+            AppLogger.error('Ошибка снятия командира', e);
+            _error = '[Снятие командира] $e';
+            notifyListeners();
             return false;
         }
     }
@@ -228,12 +264,11 @@ class UsersProvider extends ChangeNotifier {
     Future<bool> makeRecruit(int userId) async {
         try {
             final response = await ApiService.makeRecruit(userId);
-            if (response.isSuccess) {
-                await loadUsers();
-                return true;
-            }
-            return false;
+            return await _handleAction('Понижение до новобранца', response);
         } catch (e) {
+            AppLogger.error('Ошибка понижения до новобранца', e);
+            _error = '[Понижение до новобранца] $e';
+            notifyListeners();
             return false;
         }
     }

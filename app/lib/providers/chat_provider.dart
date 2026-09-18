@@ -1,11 +1,18 @@
 // =====================================================
 // 💬 BMSChat — ПРОВАЙДЕР ЧАТОВ
 // =====================================================
+// 🎯 ПАГИНАЦИЯ: подгрузка старых сообщений
+// 🎯 СЧЁТЧИК НЕПРОЧИТАННЫХ: unreadCount живёт в Chat
+//   • Инкремент при новом сообщении в неактивный чат
+//   • Обнуление при markAsRead (активный чат)
+//   • getUnreadCount теперь читает chat.unreadCount
+// =====================================================
 
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../config/constants.dart';
 import '../models/chat.dart';
 import '../models/message.dart';
 import '../services/api_service.dart';
@@ -45,6 +52,10 @@ class ChatProvider extends ChangeNotifier {
     String? _chatsError;
     String? _messagesError;
 
+    // 🎯 ПАГИНАЦИЯ
+    bool _hasMoreOld = true;
+    bool _isLoadingMore = false;
+
     // Подписки
     StreamSubscription? _newMessageSub;
     StreamSubscription? _userTypingSub;
@@ -79,8 +90,12 @@ class ChatProvider extends ChangeNotifier {
     /// Максимальный ID, прочитанный другими участниками
     int get maxReadMessageId => _maxReadMessageId;
 
-    /// Мой последний прочитанный ID
+    /// Мой последний прочитанный ID (в АКТИВНОМ чате)
     int get myLastReadMessageId => _myLastReadMessageId;
+
+    // 🎯 ПАГИНАЦИЯ
+    bool get hasMoreOld => _hasMoreOld;
+    bool get isLoadingMore => _isLoadingMore;
 
     String? get typingUser {
         if (_typingUsers.isEmpty) return null;
@@ -135,7 +150,6 @@ class ChatProvider extends ChangeNotifier {
         _reactionRemovedSub =
             SocketService.onReactionRemoved.listen(_handleReactionRemoved);
 
-        // 🎯 Подписка на прочтение
         _messageReadSub?.cancel();
         _messageReadSub =
             SocketService.onMessageRead.listen(_handleMessageRead);
@@ -183,7 +197,10 @@ class ChatProvider extends ChangeNotifier {
 
             if (response.isSuccess) {
                 _chats = response.data ?? [];
-                AppLogger.success('Загружено ${_chats.length} чатов');
+                AppLogger.success(
+                    'Загружено ${_chats.length} чатов '
+                    '(непрочитанных чатов: ${_chats.where((c) => c.hasUnread).length})'
+                );
                 _chatsError = null;
             } else {
                 _chatsError = response.error ?? 'Ошибка загрузки';
@@ -210,6 +227,16 @@ class ChatProvider extends ChangeNotifier {
             _messagesError = null;
             _maxReadMessageId = 0;
             _myLastReadMessageId = 0;
+            // 🎯 ПАГИНАЦИЯ: сброс
+            _hasMoreOld = true;
+            _isLoadingMore = false;
+
+            // 🎯 СЧЁТЧИК: обнуляем сразу при открытии (оптимистично)
+            final idx = _chats.indexWhere((c) => c.id == chatId);
+            if (idx >= 0 && _chats[idx].unreadCount > 0) {
+                _chats[idx] = _chats[idx].copyWith(unreadCount: 0);
+            }
+
             notifyListeners();
 
             await _loadMessages(chatId);
@@ -225,6 +252,9 @@ class ChatProvider extends ChangeNotifier {
         _replyToMessage = null;
         _maxReadMessageId = 0;
         _myLastReadMessageId = 0;
+        // 🎯 ПАГИНАЦИЯ: сброс
+        _hasMoreOld = true;
+        _isLoadingMore = false;
         notifyListeners();
     }
 
@@ -232,20 +262,29 @@ class ChatProvider extends ChangeNotifier {
     // 💬 СООБЩЕНИЯ
     // =====================================================
 
-    /// 🎯 Загрузка сообщений с информацией о прочтении
+    /// 🎯 Загрузка ПЕРВОЙ порции сообщений (самые свежие)
     Future<void> _loadMessages(int chatId) async {
         _isLoadingMessages = true;
         _messagesError = null;
+        // 🎯 ПАГИНАЦИЯ: сброс
+        _hasMoreOld = true;
+        _isLoadingMore = false;
         notifyListeners();
 
         try {
-            final response = await ApiService.getMessages(chatId);
+            // 🎯 ПАГИНАЦИЯ: грузим только первую порцию
+            final response = await ApiService.getMessages(
+                chatId,
+                limit: Constants.messagesPageSize,
+            );
 
             if (response.isSuccess && response.data != null) {
                 final result = response.data!;
 
                 _maxReadMessageId = result.maxReadId;
                 _myLastReadMessageId = result.myLastReadId;
+                // 🎯 ПАГИНАЦИЯ: запоминаем, есть ли ещё
+                _hasMoreOld = result.hasMore;
 
                 // 🎯 Проставляем isRead для каждого сообщения
                 final myId = _authProvider?.user?.id;
@@ -257,7 +296,9 @@ class ChatProvider extends ChangeNotifier {
 
                 AppLogger.success(
                     'Загружено ${_messages.length} сообщений '
-                    '(maxRead: ${result.maxReadId}, myLastRead: ${result.myLastReadId})'
+                    '(hasMore: $_hasMoreOld, '
+                    'maxRead: ${result.maxReadId}, '
+                    'myLastRead: ${result.myLastReadId})'
                 );
             } else {
                 _messagesError = response.error ?? 'Ошибка загрузки';
@@ -276,7 +317,91 @@ class ChatProvider extends ChangeNotifier {
         await _loadMessages(_activeChat!.id);
     }
 
+    // =====================================================
+    // 🎯 ПАГИНАЦИЯ: ПОДГРУЗКА СТАРЫХ
+    // =====================================================
+
+    /// 🎯 Подгрузка СТАРЫХ сообщений (вверх по истории).
+    /// 
+    /// 🛡️ Защита: если сервер вернул пустую порцию или дубликаты,
+    /// принудительно ставим _hasMoreOld = false.
+    Future<bool> loadMoreOld() async {
+        if (_activeChat == null) return false;
+        if (!_hasMoreOld) return false;
+        if (_isLoadingMore) return false;
+        if (_messages.isEmpty) return false;
+
+        _isLoadingMore = true;
+        notifyListeners();
+
+        try {
+            final oldestId = _messages.first.id;
+
+            final response = await ApiService.getMessages(
+                _activeChat!.id,
+                limit: Constants.messagesPageSize,
+                before: oldestId,
+            );
+
+            if (response.isSuccess && response.data != null) {
+                final result = response.data!;
+
+                _hasMoreOld = result.hasMore;
+
+                final myId = _authProvider?.user?.id;
+                final older = result.messages.map((msg) {
+                    final isOwn = msg.senderId == myId;
+                    final isRead = isOwn && msg.id <= result.maxReadId;
+                    return msg.copyWith(isRead: isRead);
+                }).toList();
+
+                final existingIds = _messages.map((m) => m.id).toSet();
+                final fresh =
+                    older.where((m) => !existingIds.contains(m.id)).toList();
+
+                // 🛡️ ЗАЩИТА: пустая порция / всё — дубликаты
+                if (fresh.isEmpty) {
+                    AppLogger.warn(
+                        '🛡️ Пагинация: пустая порция '
+                        '(raw: ${older.length}, '
+                        'дубликатов: ${older.length - fresh.length}). '
+                        'Ставим hasMore = false.'
+                    );
+                    _hasMoreOld = false;
+
+                    _isLoadingMore = false;
+                    notifyListeners();
+                    return false;
+                }
+
+                _messages = [...fresh, ..._messages];
+
+                AppLogger.success(
+                    'Подгружено ${fresh.length} старых сообщений '
+                    '(hasMore: $_hasMoreOld)'
+                );
+
+                _isLoadingMore = false;
+                notifyListeners();
+                return true;
+            } else {
+                AppLogger.warn('Ошибка подгрузки: ${response.error}');
+                _isLoadingMore = false;
+                notifyListeners();
+                return false;
+            }
+        } catch (e) {
+            AppLogger.error('Ошибка подгрузки старых', e);
+            _isLoadingMore = false;
+            notifyListeners();
+            return false;
+        }
+    }
+
     /// 🎯 Отметить все сообщения в чате как прочитанные
+    /// 
+    /// 🎯 СЧЁТЧИК: обнуляет unreadCount активного чата
+    /// и в _chats, и в _activeChat.
     Future<void> markAsRead() async {
         if (_activeChat == null) return;
         if (_messages.isEmpty) return;
@@ -287,12 +412,17 @@ class ChatProvider extends ChangeNotifier {
         if (_myLastReadMessageId >= lastMessageId) return;
 
         _myLastReadMessageId = lastMessageId;
+
+        // 🎯 СЧЁТЧИК: обнуляем unreadCount в списке чатов
+        final idx = _chats.indexWhere((c) => c.id == _activeChat!.id);
+        if (idx >= 0 && _chats[idx].unreadCount > 0) {
+            _chats[idx] = _chats[idx].copyWith(unreadCount: 0);
+        }
+
         notifyListeners();
 
         try {
-            // Отправляем через HTTP
             await ApiService.markChatRead(_activeChat!.id, lastMessageId);
-            // И через Socket
             SocketService.markRead(_activeChat!.id, lastMessageId);
         } catch (e) {
             AppLogger.error('Ошибка отметки прочтения', e);
@@ -300,12 +430,10 @@ class ChatProvider extends ChangeNotifier {
     }
 
     /// 🎯 Количество непрочитанных в чате
-    /// (если последнее сообщение > моего последнего прочитанного)
-    int getUnreadCount(Chat chat) {
-        if (chat.lastMessageId == null) return 0;
-        if (chat.lastMessageId! <= _myLastReadMessageId) return 0;
-        return 1; // TODO: точный подсчёт на сервере
-    }
+    /// 
+    /// Теперь просто читает поле из модели Chat — источник истины
+    /// один, никаких глобальных счётчиков.
+    int getUnreadCount(Chat chat) => chat.unreadCount;
 
     // =====================================================
     // 📤 ОТПРАВКА
@@ -678,19 +806,37 @@ class ChatProvider extends ChangeNotifier {
     // 📥 ОБРАБОТКА СОБЫТИЙ
     // =====================================================
 
+    /// 🎯 Новое сообщение от сервера
+    /// 
+    /// 🎯 СЧЁТЧИК:
+    ///   • если это АКТИВНЫЙ чат — добавляем в _messages, markAsRead
+    ///   • если это НЕактивный чат — увеличиваем unreadCount в _chats
     void _handleNewMessage(Map<String, dynamic> data) {
         try {
             final message = Message.fromJson(data);
             final chatId = message.chatId;
+            final isActive = _activeChat?.id == chatId;
 
-            if (_activeChat?.id == chatId) {
+            if (isActive) {
+                // 🎯 Активный чат — добавляем сообщение
                 final exists = _messages.any((m) => m.id == message.id);
                 if (!exists) {
                     _messages.add(message);
                     notifyListeners();
-
-                    // 🎯 Автоматически отмечаем как прочитанное
                     markAsRead();
+                }
+            } else {
+                // 🎯 СЧЁТЧИК: неактивный чат — увеличиваем unreadCount
+                final idx = _chats.indexWhere((c) => c.id == chatId);
+                if (idx >= 0) {
+                    final updated = _chats[idx].copyWith(
+                        unreadCount: _chats[idx].unreadCount + 1,
+                    );
+                    _chats[idx] = updated;
+                    AppLogger.debug(
+                        '🔔 +1 непрочитанное в чате ${updated.title} '
+                        '(всего: ${updated.unreadCount})'
+                    );
                 }
             }
 
@@ -783,7 +929,10 @@ class ChatProvider extends ChangeNotifier {
         _removeReactionLocally(messageId, userId, emoji);
     }
 
-    /// 🎯 Кто-то прочитал сообщение
+    /// 🎯 Кто-то прочитал сообщение (галочки на МОИХ сообщениях)
+    /// 
+    /// 🎯 СЧЁТЧИК: не трогаем unreadCount (он про мои непрочитанные,
+    /// а это событие про чужие). Просто обновляем галочки.
     void _handleMessageRead(Map<String, dynamic> data) {
         final chatId = data['chatId'] as int?;
         final userId = data['userId'] as int?;
@@ -791,12 +940,10 @@ class ChatProvider extends ChangeNotifier {
 
         if (chatId == null || userId == null || messageId == null) return;
 
-        // Если это наш чат — обновляем maxReadMessageId
         if (_activeChat?.id == chatId) {
             if (messageId > _maxReadMessageId) {
                 _maxReadMessageId = messageId;
 
-                // Помечаем все СВОИ сообщения до этого ID как прочитанные
                 final myId = _authProvider?.user?.id;
                 if (myId != null) {
                     for (int i = 0; i < _messages.length; i++) {
@@ -818,6 +965,10 @@ class ChatProvider extends ChangeNotifier {
     // 🔄 ПРЕВЬЮ
     // =====================================================
 
+    /// 🎯 Обновление превью чата
+    /// 
+    /// 🎯 СЧЁТЧИК: НЕ трогаем unreadCount здесь — только lastMessage*.
+    /// Инкремент происходит в _handleNewMessage, обнуление — в markAsRead.
     void _updateChatPreview(int chatId, Message message) {
         final index = _chats.indexWhere((c) => c.id == chatId);
         if (index >= 0) {
@@ -875,6 +1026,8 @@ class ChatProvider extends ChangeNotifier {
         _isLoadingChats = false;
         _isLoadingMessages = false;
         _isSendingMessage = false;
+        _hasMoreOld = true;
+        _isLoadingMore = false;
 
         notifyListeners();
     }

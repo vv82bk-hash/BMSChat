@@ -1,6 +1,10 @@
 // =====================================================
 // 💬 BMSChat — МОДЕЛЬ ЧАТА
 // =====================================================
+// 🎯 unreadCount: количество непрочитанных сообщений
+//    Парсит и unread_count, и unreadCount — на случай
+//    разного именования на сервере.
+// =====================================================
 
 class Chat {
     // =====================================================
@@ -29,6 +33,13 @@ class Chat {
     final DateTime? lastMessageAt;
     final List<ChatMember> members;
 
+    /// 🎯 Количество непрочитанных сообщений
+    /// Обновляется:
+    ///   • из ответа сервера (`unread_count` / `unreadCount`)
+    ///   • локально при новом сообщении (в неактивный чат)
+    ///   • обнуляется при markAsRead
+    final int unreadCount;
+
     // =====================================================
     // 🏗️ КОНСТРУКТОР
     // =====================================================
@@ -50,6 +61,7 @@ class Chat {
         this.lastMessageText,
         this.lastMessageAt,
         this.members = const [],
+        this.unreadCount = 0,
     });
 
     // =====================================================
@@ -76,6 +88,10 @@ class Chat {
             members: (json['members'] as List<dynamic>?)
                 ?.map((m) => ChatMember.fromJson(m as Map<String, dynamic>))
                 .toList() ?? [],
+            // 🎯 Парсим оба варианта имени
+            unreadCount: json['unread_count'] as int?
+                ?? json['unreadCount'] as int?
+                ?? 0,
         );
     }
 
@@ -100,6 +116,8 @@ class Chat {
             'last_message_id': lastMessageId,
             'last_message_text': lastMessageText,
             'last_message_at': lastMessageAt?.toIso8601String(),
+            // 🎯 Пишем со snake_case (совместимо с бэком)
+            'unread_count': unreadCount,
         };
     }
 
@@ -124,6 +142,7 @@ class Chat {
         String? lastMessageText,
         DateTime? lastMessageAt,
         List<ChatMember>? members,
+        int? unreadCount,
     }) {
         return Chat(
             id: id ?? this.id,
@@ -142,6 +161,7 @@ class Chat {
             lastMessageText: lastMessageText ?? this.lastMessageText,
             lastMessageAt: lastMessageAt ?? this.lastMessageAt,
             members: members ?? this.members,
+            unreadCount: unreadCount ?? this.unreadCount,
         );
     }
 
@@ -157,6 +177,9 @@ class Chat {
     bool get isAdmin => myRole == 'admin';
     bool get isMember => myRole == 'member';
 
+    /// Есть ли непрочитанные?
+    bool get hasUnread => unreadCount > 0;
+
     /// Отображаемое имя чата
     String get title {
         if (isPrivate && displayName != null && displayName!.isNotEmpty) {
@@ -171,18 +194,13 @@ class Chat {
     // =====================================================
     // 🎨 ИКОНКА ЧАТА
     // =====================================================
-    //   general  → 🖼️ (в UI = логотип)
-    //   private  → 🤙 (шака)
-    //   group    → 📢
-    //   channel  → 📢
-    // =====================================================
 
     String get icon {
         switch (type) {
             case 'general':
                 return '🖼️';
             case 'private':
-                return '🤙';   // ← изменено с '📢'
+                return '🤙';
             case 'group':
                 return '📢';
             case 'channel':
@@ -271,7 +289,8 @@ class Chat {
 
     @override
     String toString() {
-        return 'Chat(id: $id, type: $type, title: $title, members: $membersCount)';
+        return 'Chat(id: $id, type: $type, title: $title, '
+            'members: $membersCount, unread: $unreadCount)';
     }
 
     @override
@@ -279,11 +298,12 @@ class Chat {
         if (identical(this, other)) return true;
         return other is Chat &&
             other.id == id &&
-            other.lastMessageId == lastMessageId;
+            other.lastMessageId == lastMessageId &&
+            other.unreadCount == unreadCount;
     }
 
     @override
-    int get hashCode => Object.hash(id, lastMessageId);
+    int get hashCode => Object.hash(id, lastMessageId, unreadCount);
 }
 
 // =====================================================

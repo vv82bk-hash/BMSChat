@@ -1,5 +1,8 @@
 // =====================================================
-// 💬 BMSChat — ЭКРАН ЧАТА (С ОТМЕТКОЙ ПРОЧТЕНИЯ)
+// 💬 BMSChat — ЭКРАН ЧАТА (С КНОПКОЙ СКРОЛЛА ВНИЗ)
+// =====================================================
+// 🎯 МИГРАЦИЯ НА reverse: true
+// 🎯 ПАГИНАЦИЯ: подгрузка старых сообщений при скролле вверх
 // =====================================================
 
 import 'package:flutter/material.dart';
@@ -39,9 +42,25 @@ class _ChatScreenState extends State<ChatScreen> {
     /// 🎯 ID последнего прочитанного ДО открытия чата
     int _lastReadBeforeOpen = 0;
 
+    /// 🎯 GlobalKey для первого непрочитанного
+    final Map<int, GlobalKey> _messageKeys = {};
+
+    /// 🎯 Показывать ли кнопку скролла вниз
+    bool _showScrollButton = false;
+
+    // 🎯 ПАГИНАЦИЯ
+    /// Защита от повторного триггера подгрузки
+    bool _isLoadingMore = false;
+
+    /// 🎯 Последний виденный id (для отличия нового сообщения от догрузки)
+    int _lastSeenLastId = 0;
+
     @override
     void initState() {
         super.initState();
+
+        // 🎯 Слушаем скролл для показа/скрытия кнопки
+        _scrollController.addListener(_onScroll);
 
         WidgetsBinding.instance.addPostFrameCallback((_) {
             final chat = Provider.of<ChatProvider>(context, listen: false);
@@ -54,55 +73,145 @@ class _ChatScreenState extends State<ChatScreen> {
     void dispose() {
         final chat = Provider.of<ChatProvider>(context, listen: false);
         chat.removeListener(_onChatChanged);
+        _scrollController.removeListener(_onScroll);
         _messageController.dispose();
         _scrollController.dispose();
         super.dispose();
     }
 
     // ============================================
+    // 📜 ОТСЛЕЖИВАНИЕ СКРОЛЛА
+    // ============================================
+    // 🎯 ИЗМЕНЕНО:
+    //   • near bottom = pixels <= 200 (для reverse: true)
+    //   • 🎯 ПАГИНАЦИЯ: триггер подгрузки при скролле к "верху"
+    void _onScroll() {
+        if (!_scrollController.hasClients) return;
+
+        final position = _scrollController.position;
+        final isNearBottom = position.pixels <= 200;
+
+        // Показываем кнопку, если НЕ у низа
+        if (_showScrollButton == isNearBottom) {
+            setState(() => _showScrollButton = !isNearBottom);
+        }
+
+        // 🎯 ПАГИНАЦИЯ: близко к "верху" (maxScrollExtent) — догружаем
+        final isNearTop = position.pixels >= position.maxScrollExtent - 400;
+        if (isNearTop) {
+            _triggerLoadMore();
+        }
+    }
+
+    // ============================================
+    // 🎯 ПОЛУЧИТЬ GlobalKey
+    // ============================================
+    GlobalKey _getMessageKey(int messageId) {
+        return _messageKeys.putIfAbsent(messageId, () => GlobalKey());
+    }
+
+    // ============================================
     // 📜 ОТСЛЕЖИВАНИЕ ИЗМЕНЕНИЙ ЧАТА
     // ============================================
+    // 🎯 ИЗМЕНЕНО:
+    //   • при первой загрузке jumpTo(maxScrollExtent) убран
+    //   • near bottom = pixels <= 300
+    //   • 🎯 ПАГИНАЦИЯ: реакция только на НОВЫЕ (последнее по id),
+    //     догрузка старых не триггерит _scrollToBottom
     void _onChatChanged() {
         if (!mounted) return;
 
         final chat = Provider.of<ChatProvider>(context, listen: false);
 
-        // 1️⃣ Первый скролл после загрузки сообщений
+        // 1️⃣ Первый скролл
         if (!_initialScrollDone &&
             !chat.isLoadingMessages &&
             chat.messages.isNotEmpty) {
             _initialScrollDone = true;
             _lastMessageCount = chat.messages.length;
+            // 🎯 ПАГИНАЦИЯ: запоминаем последний id
+            _lastSeenLastId = chat.messages.last.id;
 
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (_lastReadBeforeOpen > 0 &&
-                    chat.messages.any((m) => m.id > _lastReadBeforeOpen)) {
-                    _scrollToFirstUnread(_lastReadBeforeOpen);
-                } else {
-                    _scrollToBottom(jump: true);
-                }
-            });
+            // 🎯 Мы уже внизу (reverse: true → offset 0).
+            if (_lastReadBeforeOpen > 0 &&
+                chat.messages.any((m) => m.id > _lastReadBeforeOpen)) {
+                _scrollToFirstUnread(_lastReadBeforeOpen);
+            }
 
             chat.markAsRead();
             return;
         }
 
-        // 2️⃣ Новое сообщение
+        // 2️⃣ Что-то изменилось
         if (chat.messages.length > _lastMessageCount) {
-            final position = _scrollController.hasClients
-                ? _scrollController.position
-                : null;
-            final isNearBottom = position == null ||
-                position.pixels >= position.maxScrollExtent - 300;
+            // 🎯 ПАГИНАЦИЯ: проверяем — новое сообщение или догрузка старых?
+            final currentLastId = chat.messages.last.id;
+            final isNewAppended = currentLastId > _lastSeenLastId;
 
             _lastMessageCount = chat.messages.length;
 
-            if (isNearBottom) {
-                _scrollToBottom();
-            }
+            if (isNewAppended) {
+                _lastSeenLastId = currentLastId;
 
-            chat.markAsRead();
+                final position = _scrollController.hasClients
+                    ? _scrollController.position
+                    : null;
+                final isNearBottom =
+                    position == null || position.pixels <= 300;
+
+                if (isNearBottom) {
+                    _scrollToBottom();
+                }
+
+                chat.markAsRead();
+            }
+            // Если это догрузка старых — ничего не делаем,
+            // позиция восстановится в _triggerLoadMore
         }
+    }
+
+    // ============================================
+    // 🎯 ПАГИНАЦИЯ: ПОДГРУЗКА СТАРЫХ
+    // ============================================
+    /// Подгрузка старых сообщений с сохранением видимой позиции.
+    /// 
+    /// При reverse: true вставка старых сообщений увеличивает
+    /// maxScrollExtent, из-за чего "видимое окно" сдвигается.
+    /// Компенсируем сдвиг через jumpTo.
+    Future<void> _triggerLoadMore() async {
+        if (_isLoadingMore) return;
+
+        final chat = Provider.of<ChatProvider>(context, listen: false);
+        if (!chat.hasMoreOld) return;
+        if (chat.isLoadingMore) return;
+        if (!_scrollController.hasClients) return;
+
+        _isLoadingMore = true;
+
+        // 🎯 Запоминаем позицию ДО вставки
+        final beforePixels = _scrollController.position.pixels;
+        final beforeMax = _scrollController.position.maxScrollExtent;
+
+        final loaded = await chat.loadMoreOld();
+
+        if (!mounted) return;
+        if (!_scrollController.hasClients) return;
+
+        if (loaded) {
+            // 🎯 После вставки: компенсируем сдвиг
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!mounted || !_scrollController.hasClients) return;
+
+                final afterMax =
+                    _scrollController.position.maxScrollExtent;
+                final delta = afterMax - beforeMax;
+
+                // Сдвигаем на ту же величину, что вырос maxScrollExtent
+                _scrollController.jumpTo(beforePixels + delta);
+            });
+        }
+
+        _isLoadingMore = false;
     }
 
     // ============================================
@@ -184,49 +293,43 @@ class _ChatScreenState extends State<ChatScreen> {
     // 📜 АВТОСКРОЛЛ
     // ============================================
     void _scrollToBottom({bool jump = false}) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!_scrollController.hasClients) return;
+        if (!_scrollController.hasClients) return;
 
-            final maxExtent = _scrollController.position.maxScrollExtent;
-
-            if (jump) {
-                _scrollController.jumpTo(maxExtent);
-            } else {
-                _scrollController.animateTo(
-                    maxExtent,
-                    duration: const Duration(milliseconds: 300),
-                    curve: Curves.easeOutCubic,
-                );
-            }
-        });
+        if (jump) {
+            _scrollController.jumpTo(0);
+        } else {
+            _scrollController.animateTo(
+                0,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeOutCubic,
+            );
+        }
     }
 
-    /// 🎯 Скролл к первому непрочитанному сообщению
+    /// 🎯 Скролл к первому непрочитанному
     void _scrollToFirstUnread(int lastReadId) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!_scrollController.hasClients) return;
+            if (!mounted) return;
 
             final chat = Provider.of<ChatProvider>(context, listen: false);
 
-            final firstUnreadIndex = chat.messages.indexWhere(
+            final firstUnread = chat.messages.firstWhere(
                 (m) => m.id > lastReadId,
+                orElse: () => chat.messages.last,
             );
 
-            if (firstUnreadIndex < 0) {
+            final key = _messageKeys[firstUnread.id];
+
+            if (key == null || key.currentContext == null) {
                 _scrollToBottom(jump: true);
                 return;
             }
 
-            const estimatedHeight = 80.0;
-            final targetOffset = firstUnreadIndex * estimatedHeight;
-
-            _scrollController.animateTo(
-                targetOffset.clamp(
-                    0.0,
-                    _scrollController.position.maxScrollExtent,
-                ),
+            Scrollable.ensureVisible(
+                key.currentContext!,
                 duration: const Duration(milliseconds: 500),
                 curve: Curves.easeOutCubic,
+                alignment: 0.3,
             );
         });
     }
@@ -351,43 +454,100 @@ class _ChatScreenState extends State<ChatScreen> {
             body: Column(
                 children: [
                     Expanded(
-                        child: chat.isLoadingMessages
-                            ? const Center(
-                                child: CircularProgressIndicator(
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                        RastaTheme.rastaYellow,
-                                    ),
-                                ),
-                            )
-                            : chat.messages.isEmpty
-                                ? _buildEmptyState(activeChat?.useLogoImage ?? false)
-                                : ListView.builder(
-                                    controller: _scrollController,
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 8,
-                                    ),
-                                    itemCount: chat.messages.length,
-                                    itemBuilder: (context, index) {
-                                        final message = chat.messages[index];
-                                        final isOwn =
-                                            message.senderId == currentUserId;
-
-                                        return AnimatedMessageWrapper(
-                                            key: ValueKey(message.id),
-                                            messageId: message.id,
-                                            child: MessageBubble(
-                                                message: message,
-                                                isOwn: isOwn,
-                                                onLongPress: () =>
-                                                    _showReactionPicker(
-                                                        context,
-                                                        message,
-                                                        isOwn,
-                                                    ),
+                        child: Stack(
+                            children: [
+                                // ─────────────────────────────
+                                // СПИСОК СООБЩЕНИЙ
+                                // ─────────────────────────────
+                                chat.isLoadingMessages
+                                    ? const Center(
+                                        child: CircularProgressIndicator(
+                                            valueColor: AlwaysStoppedAnimation<Color>(
+                                                RastaTheme.rastaYellow,
                                             ),
-                                        );
-                                    },
+                                        ),
+                                    )
+                                    : chat.messages.isEmpty
+                                        ? _buildEmptyState(activeChat?.useLogoImage ?? false)
+                                        : ListView.builder(
+                                            controller: _scrollController,
+                                            reverse: true,
+                                            padding: const EdgeInsets.symmetric(
+                                                vertical: 8,
+                                                horizontal: 0,
+                                            ),
+                                            itemCount: chat.messages.length,
+                                            itemBuilder: (context, index) {
+                                                final message = chat.messages[
+                                                    chat.messages.length - 1 - index
+                                                ];
+                                                final isOwn =
+                                                    message.senderId == currentUserId;
+
+                                                return AnimatedMessageWrapper(
+                                                    key: _getMessageKey(message.id),
+                                                    messageId: message.id,
+                                                    child: MessageBubble(
+                                                        message: message,
+                                                        isOwn: isOwn,
+                                                        onLongPress: () =>
+                                                            _showReactionPicker(
+                                                                context,
+                                                                message,
+                                                                isOwn,
+                                                            ),
+                                                    ),
+                                                );
+                                            },
+                                        ),
+
+                                // ─────────────────────────────
+                                // 🎯 ПАГИНАЦИЯ: ИНДИКАТОР СВЕРХУ
+                                // ─────────────────────────────
+                                if (chat.isLoadingMore)
+                                    const Positioned(
+                                        top: 0,
+                                        left: 0,
+                                        right: 0,
+                                        child: Padding(
+                                            padding: EdgeInsets.symmetric(
+                                                vertical: 8,
+                                            ),
+                                            child: Center(
+                                                child: SizedBox(
+                                                    width: 24,
+                                                    height: 24,
+                                                    child: CircularProgressIndicator(
+                                                        strokeWidth: 2,
+                                                        valueColor:
+                                                            AlwaysStoppedAnimation<Color>(
+                                                                RastaTheme.rastaYellow,
+                                                            ),
+                                                    ),
+                                                ),
+                                            ),
+                                        ),
+                                    ),
+
+                                // ─────────────────────────────
+                                // КНОПКА СКРОЛЛА ВНИЗ
+                                // ─────────────────────────────
+                                Positioned(
+                                    right: 16,
+                                    bottom: 16,
+                                    child: AnimatedScale(
+                                        scale: _showScrollButton ? 1.0 : 0.0,
+                                        duration: const Duration(milliseconds: 200),
+                                        curve: Curves.easeOutBack,
+                                        child: AnimatedOpacity(
+                                            opacity: _showScrollButton ? 1.0 : 0.0,
+                                            duration: const Duration(milliseconds: 200),
+                                            child: _buildScrollToBottomButton(),
+                                        ),
+                                    ),
                                 ),
+                            ],
+                        ),
                     ),
 
                     if (canWrite) ...[
@@ -397,6 +557,53 @@ class _ChatScreenState extends State<ChatScreen> {
                     ] else
                         _buildBlockedField(permissionError),
                 ],
+            ),
+        );
+    }
+
+    // =====================================================
+    // 🎯 КНОПКА СКРОЛЛА ВНИЗ (СТИЛЬНАЯ)
+    // =====================================================
+    Widget _buildScrollToBottomButton() {
+        return GestureDetector(
+            onTap: () {
+                _scrollToBottom();
+                setState(() => _showScrollButton = false);
+            },
+            child: Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                            RastaTheme.rastaYellow,
+                            RastaTheme.rastaGreen,
+                        ],
+                    ),
+                    boxShadow: [
+                        BoxShadow(
+                            color: RastaTheme.rastaYellow.withValues(alpha: 0.5),
+                            blurRadius: 15,
+                            spreadRadius: 2,
+                            offset: const Offset(0, 4),
+                        ),
+                        BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.3),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                        ),
+                    ],
+                ),
+                child: const Center(
+                    child: Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        color: Colors.black,
+                        size: 32,
+                    ),
+                ),
             ),
         );
     }
@@ -682,8 +889,6 @@ class _ChatScreenState extends State<ChatScreen> {
     // ============================================
     // 😀 ВЫБОР РЕАКЦИИ / ДЕЙСТВИЯ
     // ============================================
-    // ✅ ИСПРАВЛЕНО: isScrollControlled + SingleChildScrollView
-    // ============================================
     void _showReactionPicker(
         BuildContext context,
         Message message,
@@ -701,15 +906,14 @@ class _ChatScreenState extends State<ChatScreen> {
         showModalBottomSheet(
             context: context,
             backgroundColor: Colors.transparent,
-            isScrollControlled: true,   // ✅ разрешает панели быть выше половины экрана
+            isScrollControlled: true,
             builder: (bottomSheetContext) {
-                return SingleChildScrollView(   // ✅ включает прокрутку
+                return SingleChildScrollView(
                     child: Container(
                         padding: EdgeInsets.only(
                             left: 16,
                             right: 16,
                             top: 16,
-                            // ✅ учитывает системную навигацию
                             bottom: 16 + MediaQuery.of(bottomSheetContext).padding.bottom,
                         ),
                         child: Column(
