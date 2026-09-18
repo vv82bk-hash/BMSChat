@@ -1,11 +1,11 @@
 // =====================================================
 // 👥 BMSChat — РОУТЫ ПОЛЬЗОВАТЕЛЕЙ (PostgreSQL)
 // =====================================================
-// 🎯 ПАТЧИ (2026-09-19):
-//   • approve: clearUserRoles перед assignRoleToUser
-//   • assign-commander: clearUserRoles перед assignRoleToUser
-//   • roles/:roleId (POST): clearUserRoles перед assignRoleToUser
-//   Раньше роли накапливались — теперь заменяются.
+// История патчей:
+//   🎯 2026-09-19 — clearUserRoles перед сменой роли
+//                   (approve, assign-commander, roles/:roleId)
+//   🔒 2026-09-19 — запрет смены роли для неподтверждённых
+//                   (set-role, roles/:roleId)
 // =====================================================
 
 const express = require('express');
@@ -120,6 +120,22 @@ async function canManageTarget(actorId, targetId) {
         allowed: false,
         reason: 'Нельзя управлять учётной записью администратора',
     };
+}
+
+/**
+ * 🔒 Проверяет, что пользователь подтверждён.
+ * 
+ * Возвращает { approved: boolean, isApprovedRaw: boolean }.
+ * Используется в эндпоинтах смены роли, чтобы нельзя было
+ * перевести неподтверждённого новобранца в «Бойца» напрямую.
+ */
+async function getUserApprovedStatus(userId) {
+    const result = await pool.query(
+        'SELECT is_approved FROM users WHERE id = $1',
+        [userId]
+    );
+    if (result.rows.length === 0) return null;
+    return result.rows[0].is_approved === true;
 }
 
 // =====================================================
@@ -570,6 +586,14 @@ router.post(
                 return res.status(404).json({ error: `Роль "${roleName}" не найдена` });
             }
 
+            // 🔒 ЗАЩИТА is_approved: неподтверждённому можно только «Новобранец»
+            const isApproved = await getUserApprovedStatus(userId);
+            if (!isApproved && roleName !== 'Новобранец') {
+                return res.status(400).json({
+                    error: 'Сначала подтвердите пользователя',
+                });
+            }
+
             await clearUserRoles(userId);
             await assignRoleToUser(userId, roleResult.rows[0].id, req.user.id);
 
@@ -623,17 +647,26 @@ router.post(
                 return res.status(404).json({ error: 'Роль не найдена' });
             }
 
+            // 🔒 ЗАЩИТА is_approved: неподтверждённому можно только «Новобранец»
+            const isApproved = await getUserApprovedStatus(userId);
+            const roleName = roleResult.rows[0].name;
+            if (!isApproved && roleName !== 'Новобранец') {
+                return res.status(400).json({
+                    error: 'Сначала подтвердите пользователя',
+                });
+            }
+
             // 🎯 ПАТЧ 3: заменяем все роли на указанную
             await clearUserRoles(userId);
             await assignRoleToUser(userId, roleId, req.user.id);
 
             logger.success('Роль назначена', {
                 userId,
-                roleName: roleResult.rows[0].name,
+                roleName,
                 assignedBy: req.user.id,
             });
 
-            res.json({ message: `Роль "${roleResult.rows[0].name}" назначена` });
+            res.json({ message: `Роль "${roleName}" назначена` });
         } catch (error) {
             logger.error('Ошибка назначения роли', error);
             res.status(500).json({ error: 'Ошибка сервера' });
