@@ -1,17 +1,6 @@
 // =====================================================
 // 💬 BMSChat — МОДЕЛЬ ЧАТА
 // =====================================================
-// Описывает чат. 4 типа:
-//   • private — личный чат (2 человека)
-//   • general — общий чат команды
-//   • group   — групповой чат
-//   • channel — канал (пишут только админы)
-//
-// Использование:
-//   final chat = Chat.fromJson(jsonData);
-//   print(chat.displayName);
-//   print(chat.icon);
-// =====================================================
 
 class Chat {
     // =====================================================
@@ -26,6 +15,9 @@ class Chat {
 
     /// Название (для групп/каналов)
     final String? name;
+
+    /// Отображаемое имя (для личных — имя собеседника)
+    final String? displayName;
 
     /// Описание
     final String? description;
@@ -75,6 +67,7 @@ class Chat {
         required this.id,
         required this.type,
         this.name,
+        this.displayName,
         this.description,
         this.avatar,
         this.createdBy,
@@ -92,30 +85,13 @@ class Chat {
     // =====================================================
     // 📥 FROM JSON
     // =====================================================
-    // Сервер присылает:
-    //   {
-    //     "id": 1,
-    //     "type": "general",
-    //     "name": "Общий чат",
-    //     "description": "Общий чат команды",
-    //     "avatar": null,
-    //     "created_by": 1,
-    //     "is_active": 1,
-    //     "created_at": "...",
-    //     "updated_at": "...",
-    //     "my_role": "admin",
-    //     "members_count": 3,
-    //     "last_message_id": 5,
-    //     "last_message_text": "Привет!",
-    //     "last_message_at": "..."
-    //   }
-    // =====================================================
 
     factory Chat.fromJson(Map<String, dynamic> json) {
         return Chat(
             id: json['id'] as int? ?? 0,
             type: json['type'] as String? ?? 'group',
             name: json['name'] as String?,
+            displayName: json['display_name'] as String?,
             description: json['description'] as String?,
             avatar: json['avatar'] as String?,
             createdBy: json['created_by'] as int?,
@@ -142,6 +118,7 @@ class Chat {
             'id': id,
             'type': type,
             'name': name,
+            'display_name': displayName,
             'description': description,
             'avatar': avatar,
             'created_by': createdBy,
@@ -164,6 +141,7 @@ class Chat {
         int? id,
         String? type,
         String? name,
+        String? displayName,
         String? description,
         String? avatar,
         int? createdBy,
@@ -181,6 +159,7 @@ class Chat {
             id: id ?? this.id,
             type: type ?? this.type,
             name: name ?? this.name,
+            displayName: displayName ?? this.displayName,
             description: description ?? this.description,
             avatar: avatar ?? this.avatar,
             createdBy: createdBy ?? this.createdBy,
@@ -219,23 +198,33 @@ class Chat {
     bool get isMember => myRole == 'member';
 
     /// Отображаемое имя чата
-    /// (если название есть — используем его, иначе — тип)
-    String get displayName {
+    String get title {
+        // 1. Для личных — display_name (имя собеседника)
+        if (isPrivate && displayName != null && displayName!.isNotEmpty) {
+            return displayName!;
+        }
+
+        // 2. Для остальных — name
         if (name != null && name!.isNotEmpty) return name!;
+
+        // 3. Fallback
         if (isGeneral) return 'Общий чат';
         if (isPrivate) return 'Личный чат';
         return 'Чат #$id';
     }
 
     /// Иконка чата (эмодзи)
+    /// 
+    /// Общий чат → '🖼️' (в UI заменим на картинку logo.png)
+    /// Личные → иконка как у канала/группы: '📢'
     String get icon {
         switch (type) {
             case 'general':
-                return '💬';
+                return '🖼️'; // в UI заменим на картинку logo.png
             case 'private':
-                return '👤';
+                return '📢'; // как у канала
             case 'group':
-                return '👥';
+                return '📢';
             case 'channel':
                 return '📢';
             default:
@@ -243,12 +232,18 @@ class Chat {
         }
     }
 
+    /// Использовать логотип вместо эмодзи?
+    bool get useLogoImage => type == 'general';
+
     /// Текст последнего сообщения (сокращённый)
     String get lastMessagePreview {
         if (lastMessageText == null || lastMessageText!.isEmpty) {
             return 'Нет сообщений';
         }
         final text = lastMessageText!;
+        if (text.startsWith('/api/files/') || text.startsWith('IMG:')) {
+            return '📷 Фото';
+        }
         if (text.length > 50) {
             return '${text.substring(0, 50)}...';
         }
@@ -258,28 +253,24 @@ class Chat {
     /// Время последнего сообщения в формате «14:30»
     String get lastMessageTime {
         if (lastMessageAt == null) return '';
-        
+
         final now = DateTime.now();
         final diff = now.difference(lastMessageAt!);
 
-        // Сегодня — показываем время
         if (diff.inHours < 24 && now.day == lastMessageAt!.day) {
             final hour = lastMessageAt!.hour.toString().padLeft(2, '0');
             final minute = lastMessageAt!.minute.toString().padLeft(2, '0');
             return '$hour:$minute';
         }
 
-        // Вчера
         if (diff.inDays < 2) {
             return 'вчера';
         }
 
-        // На этой неделе
         if (diff.inDays < 7) {
             return '${diff.inDays} дн';
         }
 
-        // Старше
         final day = lastMessageAt!.day.toString().padLeft(2, '0');
         final month = lastMessageAt!.month.toString().padLeft(2, '0');
         return '$day.$month';
@@ -287,8 +278,9 @@ class Chat {
 
     /// Инициалы для аватарки-заглушки
     String get initials {
-        if (name == null || name!.isEmpty) return icon;
-        final parts = name!.trim().split(' ');
+        final source = displayName ?? name;
+        if (source == null || source.isEmpty) return '?';
+        final parts = source.trim().split(' ');
         if (parts.length == 1) {
             return parts[0].substring(0, 1).toUpperCase();
         }
@@ -319,7 +311,7 @@ class Chat {
 
     @override
     String toString() {
-        return 'Chat(id: $id, type: $type, name: $name, members: $membersCount)';
+        return 'Chat(id: $id, type: $type, title: $title, members: $membersCount)';
     }
 
     @override
@@ -337,30 +329,14 @@ class Chat {
 // =====================================================
 // 👥 МОДЕЛЬ УЧАСТНИКА ЧАТА
 // =====================================================
-// Расширяет данные User ролью в конкретном чате.
-// Используется на экране информации о чате.
-// =====================================================
 
 class ChatMember {
-    /// ID пользователя
     final int id;
-
-    /// Логин
     final String username;
-
-    /// Отображаемое имя
     final String displayName;
-
-    /// Аватарка
     final String? avatar;
-
-    /// Статус: 'online' / 'offline'
     final String status;
-
-    /// Роль в чате: 'admin' / 'member'
     final String role;
-
-    /// Когда присоединился
     final DateTime? joinedAt;
 
     const ChatMember({
@@ -385,13 +361,9 @@ class ChatMember {
         );
     }
 
-    /// Онлайн?
     bool get isOnline => status == 'online';
-
-    /// Админ чата?
     bool get isAdmin => role == 'admin';
 
-    /// Инициалы
     String get initials {
         final parts = displayName.trim().split(' ');
         if (parts.isEmpty || parts.first.isEmpty) return '?';

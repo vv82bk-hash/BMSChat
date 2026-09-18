@@ -247,7 +247,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                         Text(
-                            activeChat?.displayName ?? 'Чат',
+                            activeChat?.title ?? 'Чат',
                             style: const TextStyle(fontSize: 16),
                         ),
                         if (activeChat != null) _buildSubtitle(chat),

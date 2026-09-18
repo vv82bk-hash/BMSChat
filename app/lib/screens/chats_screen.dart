@@ -51,7 +51,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
     // 📂 ОТКРЫТИЕ ЧАТА С АНИМАЦИЕЙ (снизу вверх)
     // ============================================
     Future<void> _openChat(Chat chat) async {
-        AppLogger.info('📂 Открытие: ${chat.displayName}');
+        AppLogger.info('📂 Открытие: ${chat.title}');
 
         final chatProvider = Provider.of<ChatProvider>(context, listen: false);
         await chatProvider.openChat(chat.id);
@@ -300,10 +300,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
                                         gradient: _getChatGradient(chat.type),
                                     ),
                                     child: Center(
-                                        child: Text(
-                                            chat.icon,
-                                            style: const TextStyle(fontSize: 28),
-                                        ),
+                                        child: _buildChatIcon(chat),
                                     ),
                                 ),
                                 if (onlineInfo.showDot)
@@ -338,7 +335,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
                                         children: [
                                             Expanded(
                                                 child: Text(
-                                                    chat.displayName,
+                                                    chat.title,
                                                     style: const TextStyle(
                                                         fontSize: 16,
                                                         fontWeight: FontWeight.w600,
@@ -403,6 +400,36 @@ class _ChatsScreenState extends State<ChatsScreen> {
                     ],
                 ),
             ),
+        );
+    }
+
+    // ============================================
+    // 🎨 ИКОНКА ЧАТА (логотип или эмодзи)
+    // ============================================
+    Widget _buildChatIcon(Chat chat) {
+        // Общий чат → логотип отряда
+        if (chat.useLogoImage) {
+            return ClipOval(
+                child: Image.asset(
+                    'assets/images/logo.png',
+                    width: 56,
+                    height: 56,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) {
+                        // Фолбэк — эмодзи, если картинка не найдена
+                        return Text(
+                            chat.icon,
+                            style: const TextStyle(fontSize: 28),
+                        );
+                    },
+                ),
+            );
+        }
+
+        // Остальные — эмодзи
+        return Text(
+            chat.icon,
+            style: const TextStyle(fontSize: 28),
         );
     }
 

@@ -13,6 +13,8 @@ const logger = require('../utils/logger');
 // =====================================================
 // 📋 GET /api/chats
 // =====================================================
+// Для личных чатов возвращаем display_name собеседника
+// =====================================================
 router.get('/', authMiddleware, async (req, res) => {
     try {
         const result = await pool.query(`
@@ -23,7 +25,18 @@ router.get('/', authMiddleware, async (req, res) => {
                 (SELECT COUNT(*)::int FROM chat_members WHERE chat_id = c.id) as members_count,
                 (SELECT id FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message_id,
                 (SELECT text FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message_text,
-                (SELECT created_at FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message_at
+                (SELECT created_at FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message_at,
+                CASE 
+                    WHEN c.type = 'private' THEN (
+                        SELECT u.display_name 
+                        FROM chat_members cm2
+                        INNER JOIN users u ON u.id = cm2.user_id
+                        WHERE cm2.chat_id = c.id 
+                          AND cm2.user_id != $1
+                        LIMIT 1
+                    )
+                    ELSE c.name
+                END as display_name
             FROM chats c
             INNER JOIN chat_members cm ON cm.chat_id = c.id
             WHERE cm.user_id = $1 AND c.is_active = TRUE

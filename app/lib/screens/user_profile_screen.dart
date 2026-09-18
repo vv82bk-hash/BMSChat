@@ -16,6 +16,7 @@ import '../services/api_service.dart';
 import '../themes/rasta_theme.dart';
 import '../utils/app_logger.dart';
 import '../widgets/permission_chip.dart';
+import 'chat_screen.dart';
 
 class UserProfileScreen extends StatefulWidget {
     final int userId;
@@ -385,6 +386,39 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         final canApprove = me?.canApproveUsers ?? false;
         final canAssign = me?.canAssignCommanders ?? false;
 
+        // 🔒 ЗАЩИТА: target — админ, а я — не сам админ
+        // (id 1 — оригинальный admin, его нельзя трогать)
+        final targetIsAdmin = user.isAdmin;
+        final iAmOriginalAdmin = me?.id == 1;
+
+        if (targetIsAdmin && !iAmOriginalAdmin && !isMe) {
+            return _card(
+                title: 'Действия',
+                child: const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 8),
+                    child: Row(
+                        children: [
+                            Icon(
+                                Icons.lock_outline,
+                                size: 18,
+                                color: RastaTheme.warning,
+                            ),
+                            SizedBox(width: 8),
+                            Expanded(
+                                child: Text(
+                                    'Нельзя управлять учётной записью администратора',
+                                    style: TextStyle(
+                                        fontSize: 13,
+                                        color: RastaTheme.warning,
+                                    ),
+                                ),
+                            ),
+                        ],
+                    ),
+                ),
+            );
+        }
+
         final buttons = <Widget>[];
 
         // Написать сообщение (всем, кроме себя)
@@ -529,7 +563,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             await chatProvider.openChat(chatId);
 
             if (!mounted) return;
-            Navigator.pop(context);
+
+            // 📱 Переходим в чат (профиль остаётся в стеке — как в Telegram)
+            Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => ChatScreen(chatId: chatId),
+                ),
+            );
         } catch (e) {
             AppLogger.error('Ошибка открытия личного чата', e);
             if (mounted) _showSnack('Ошибка сети', isError: true);
