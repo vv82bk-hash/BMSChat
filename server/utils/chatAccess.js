@@ -2,6 +2,10 @@
 // 🔐 BMSChat — ПРОВЕРКА ДОСТУПА К ЧАТАМ (PostgreSQL)
 // =====================================================
 // ⚠️ Все функции — async (await в роутах обязателен!)
+//
+// 🎯 ПАТЧ 2026-09-19:
+//   • checkWriteAccess → канал: пишут все Бойцы+ (участники)
+//     (раньше — только can_create_feed = админ/командир)
 // =====================================================
 
 const { pool } = require('../database/init');
@@ -60,11 +64,13 @@ async function checkWriteAccess(chatId, userId) {
     const perms = await getMergedPermissions(userId);
 
     switch (access.chatType) {
+        // 🎯 ПАТЧ: канал — пишут все Бойцы+ (участники канала).
+        // checkChatAccess уже проверил, что я участник.
+        // can_write_general = true у Бойца/Командира/Админа,
+        // false у Новобранца.
         case 'channel': {
-            if (perms.can_create_feed || perms.can_manage_roles) {
-                return { allowed: true };
-            }
-            return { allowed: false, reason: 'В канале могут писать только админы' };
+            if (perms.can_write_general) return { allowed: true };
+            return { allowed: false, reason: 'В канале могут писать только бойцы' };
         }
 
         case 'general': {
