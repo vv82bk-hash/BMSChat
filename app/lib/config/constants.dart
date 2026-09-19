@@ -195,7 +195,7 @@ class ApiEndpoints {
     static String markRead(int chatId) => '/chats/$chatId/read';
 
     // ─────────────────────────────────────────
-    // 📝 СООБЩЕНИЯ (ИСПРАВЛЕНО)
+    // 📝 СООБЩЕНИЯ
     // ─────────────────────────────────────────
     static String messages(int chatId) => '/messages/$chatId';
     static String message(int messageId) => '/messages/$messageId';
@@ -220,9 +220,6 @@ class ApiEndpoints {
 // =====================================================
 
 class StorageKeys {
-    // ─────────────────────────────────────────
-    // Канонические ключи
-    // ─────────────────────────────────────────
     static const String token = 'auth_token';
     static const String userId = 'user_id';
     static const String username = 'username';
@@ -232,9 +229,6 @@ class StorageKeys {
     static const String theme = 'app_theme';
     static const String locale = 'app_locale';
 
-    // ─────────────────────────────────────────
-    // Алиасы для совместимости
-    // ─────────────────────────────────────────
     static const String authToken = token;
     static const String currentUser = userJson;
 }
