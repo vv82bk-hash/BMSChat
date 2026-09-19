@@ -5,7 +5,7 @@
 //   🎯 2026-09-19 (Шаг 4): GET /api/chats — is_member, is_private, emoji
 //   🎯 2026-09-19 (Шаг 5): POST /api/chats — isPrivate, emoji, фильтр
 //   🎯 2026-09-19 (Шаг 6): PUT/DELETE/:id, join, members/bulk
-//                          + обновление members/:userId
+//   🎯 2026-09-19 (Диагностика): console.error в PUT/DELETE catch
 // =====================================================
 
 const express = require('express');
@@ -261,21 +261,12 @@ router.post('/private/:userId', authMiddleware, async (req, res) => {
 });
 
 // =====================================================
-// 🚪 POST /api/chats/:id/join — вступить в публичный канал
-// =====================================================
-// 🎯 ШАГ 6: новый роут.
-// 
-// Правила:
-//   • Чат существует, активен, type = 'channel'
-//   • is_private = FALSE (в приватный нельзя «вступить»)
-//   • Я — Боец+ (can_write_general)
-//   • Я ещё не участник
+// 🚪 POST /api/chats/:id/join
 // =====================================================
 router.post('/:id/join', authMiddleware, async (req, res) => {
     try {
         const chatId = parseInt(req.params.id, 10);
 
-        // 1. Проверяем, что чат — публичный канал
         const chatResult = await pool.query(`
             SELECT id, type, is_private, is_active 
             FROM chats WHERE id = $1
@@ -301,7 +292,6 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
             });
         }
 
-        // 2. Проверяем, что я — Боец+
         const roleCheck = await pool.query(`
             SELECT 1 FROM user_roles ur
             INNER JOIN roles r ON r.id = ur.role_id
@@ -316,7 +306,6 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
             });
         }
 
-        // 3. Проверяем, что я ещё не участник
         const memberCheck = await pool.query(`
             SELECT 1 FROM chat_members 
             WHERE chat_id = $1 AND user_id = $2
@@ -326,7 +315,6 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'Вы уже участник канала' });
         }
 
-        // 4. Добавляем как 'member'
         await pool.query(`
             INSERT INTO chat_members (chat_id, user_id, role)
             VALUES ($1, $2, 'member')
@@ -347,10 +335,6 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
 // =====================================================
 // 👥 POST /api/chats/:id/members/bulk
 // =====================================================
-// 🎯 ШАГ 6: массовое добавление участников.
-// Только для каналов. Права: canManageChannelMembers.
-// ⚠️ Объявлен ВЫШЕ /:id/members — иначе Express спутает.
-// =====================================================
 router.post('/:id/members/bulk', authMiddleware, async (req, res) => {
     try {
         const chatId = parseInt(req.params.id, 10);
@@ -360,7 +344,6 @@ router.post('/:id/members/bulk', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'userIds должен быть массивом' });
         }
 
-        // 1. Проверка прав
         const canManage = await canManageChannelMembers(chatId, req.user.id);
         if (!canManage) {
             return res.status(403).json({
@@ -368,7 +351,6 @@ router.post('/:id/members/bulk', authMiddleware, async (req, res) => {
             });
         }
 
-        // 2. Проверка типа чата
         const chatCheck = await pool.query(
             'SELECT type FROM chats WHERE id = $1',
             [chatId]
@@ -382,7 +364,6 @@ router.post('/:id/members/bulk', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'Массовое управление — только для каналов' });
         }
 
-        // 3. Фильтр: только Бойцы+, подтверждённые
         const validMembersResult = await pool.query(`
             SELECT DISTINCT u.id
             FROM users u
@@ -395,7 +376,6 @@ router.post('/:id/members/bulk', authMiddleware, async (req, res) => {
 
         const validMemberIds = validMembersResult.rows.map((r) => r.id);
 
-        // 4. Добавляем
         let added = 0;
         for (const memberId of validMemberIds) {
             try {
@@ -433,8 +413,7 @@ router.post('/:id/members/bulk', authMiddleware, async (req, res) => {
 // =====================================================
 // ✏️ PUT /api/chats/:id — редактирование канала
 // =====================================================
-// 🎯 ШАГ 6: новый роут.
-// Права: canManageChannel (Админ/Командир системы + Создатель).
+// 🎯 ДИАГНОСТИКА: при ошибке пишем stack в console.error
 // =====================================================
 router.put('/:id', authMiddleware, async (req, res) => {
     try {
@@ -514,6 +493,17 @@ router.put('/:id', authMiddleware, async (req, res) => {
 
         res.json({ message: 'Канал обновлён' });
     } catch (error) {
+        // 🎯 ДИАГНОСТИКА: пишем в stderr — Onreza может показать
+        console.error('❌❌❌ PUT /api/chats — ОШИБКА ❌❌❌');
+        console.error('chatId:', req.params.id);
+        console.error('userId:', req.user?.id);
+        console.error('body:', JSON.stringify(req.body));
+        console.error('MESSAGE:', error.message);
+        console.error('CODE:', error.code);
+        console.error('DETAIL:', error.detail);
+        console.error('STACK:', error.stack);
+        console.error('❌❌❌ КОНЕЦ ❌❌❌');
+
         logger.error('Ошибка редактирования канала', error);
         res.status(500).json({ error: 'Ошибка сервера' });
     }
@@ -522,9 +512,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
 // =====================================================
 // 🗑️ DELETE /api/chats/:id — удаление канала (soft)
 // =====================================================
-// 🎯 ШАГ 6: новый роут.
-// Права: canManageChannel.
-// Soft delete: is_active = FALSE.
+// 🎯 ДИАГНОСТИКА: при ошибке пишем stack в console.error
 // =====================================================
 router.delete('/:id', authMiddleware, async (req, res) => {
     try {
@@ -560,6 +548,16 @@ router.delete('/:id', authMiddleware, async (req, res) => {
 
         res.json({ message: 'Канал удалён' });
     } catch (error) {
+        // 🎯 ДИАГНОСТИКА
+        console.error('❌❌❌ DELETE /api/chats — ОШИБКА ❌❌❌');
+        console.error('chatId:', req.params.id);
+        console.error('userId:', req.user?.id);
+        console.error('MESSAGE:', error.message);
+        console.error('CODE:', error.code);
+        console.error('DETAIL:', error.detail);
+        console.error('STACK:', error.stack);
+        console.error('❌❌❌ КОНЕЦ ❌❌❌');
+
         logger.error('Ошибка удаления канала', error);
         res.status(500).json({ error: 'Ошибка сервера' });
     }
@@ -597,9 +595,6 @@ router.get('/:id', authMiddleware, async (req, res) => {
 // =====================================================
 // ➕ POST /api/chats/:id/members — одиночное добавление
 // =====================================================
-// 🎯 ШАГ 6: обновлён.
-// Теперь использует canManageChannelMembers (учитывает is_private).
-// =====================================================
 router.post('/:id/members', authMiddleware, async (req, res) => {
     try {
         const chatId = parseInt(req.params.id, 10);
@@ -616,7 +611,6 @@ router.post('/:id/members', authMiddleware, async (req, res) => {
             });
         }
 
-        // Проверка: Боец+ и подтверждён
         const validCheck = await pool.query(`
             SELECT 1 FROM users u
             INNER JOIN user_roles ur ON ur.user_id = u.id
@@ -651,9 +645,6 @@ router.post('/:id/members', authMiddleware, async (req, res) => {
 // =====================================================
 // 🗑️ DELETE /api/chats/:id/members/:userId
 // =====================================================
-// 🎯 ШАГ 6: обновлён.
-// Использует canManageChannelMembers (учитывает is_private).
-// =====================================================
 router.delete('/:id/members/:userId', authMiddleware, async (req, res) => {
     try {
         const chatId = parseInt(req.params.id, 10);
@@ -666,7 +657,6 @@ router.delete('/:id/members/:userId', authMiddleware, async (req, res) => {
             });
         }
 
-        // Нельзя удалить создателя канала
         const chatResult = await pool.query(
             'SELECT created_by FROM chats WHERE id = $1',
             [chatId]
