@@ -3,9 +3,10 @@
 // =====================================================
 // 🎯 ПАГИНАЦИЯ: подгрузка старых сообщений
 // 🎯 СЧЁТЧИК НЕПРОЧИТАННЫХ: unreadCount живёт в Chat
-//   • Инкремент при новом сообщении в неактивный чат
-//   • Обнуление при markAsRead (активный чат)
-//   • getUnreadCount теперь читает chat.unreadCount
+// 🎯 ШАГ 9: управление каналами
+//   • createChannel, updateChannel, deleteChannel
+//   • joinChannel, addChannelMembers, removeChannelMember
+//   • _handleNewMessage: не увеличивает для не-участников канала
 // =====================================================
 
 import 'dart:async';
@@ -87,13 +88,9 @@ class ChatProvider extends ChangeNotifier {
     String? get messagesError => _messagesError;
     Message? get replyToMessage => _replyToMessage;
 
-    /// Максимальный ID, прочитанный другими участниками
     int get maxReadMessageId => _maxReadMessageId;
-
-    /// Мой последний прочитанный ID (в АКТИВНОМ чате)
     int get myLastReadMessageId => _myLastReadMessageId;
 
-    // 🎯 ПАГИНАЦИЯ
     bool get hasMoreOld => _hasMoreOld;
     bool get isLoadingMore => _isLoadingMore;
 
@@ -199,7 +196,8 @@ class ChatProvider extends ChangeNotifier {
                 _chats = response.data ?? [];
                 AppLogger.success(
                     'Загружено ${_chats.length} чатов '
-                    '(непрочитанных чатов: ${_chats.where((c) => c.hasUnread).length})'
+                    '(непрочитанных: ${_chats.where((c) => c.hasUnread).length}, '
+                    'каналов: ${_chats.where((c) => c.isChannel).length})'
                 );
                 _chatsError = null;
             } else {
@@ -227,11 +225,9 @@ class ChatProvider extends ChangeNotifier {
             _messagesError = null;
             _maxReadMessageId = 0;
             _myLastReadMessageId = 0;
-            // 🎯 ПАГИНАЦИЯ: сброс
             _hasMoreOld = true;
             _isLoadingMore = false;
 
-            // 🎯 СЧЁТЧИК: обнуляем сразу при открытии (оптимистично)
             final idx = _chats.indexWhere((c) => c.id == chatId);
             if (idx >= 0 && _chats[idx].unreadCount > 0) {
                 _chats[idx] = _chats[idx].copyWith(unreadCount: 0);
@@ -252,27 +248,283 @@ class ChatProvider extends ChangeNotifier {
         _replyToMessage = null;
         _maxReadMessageId = 0;
         _myLastReadMessageId = 0;
-        // 🎯 ПАГИНАЦИЯ: сброс
         _hasMoreOld = true;
         _isLoadingMore = false;
         notifyListeners();
     }
 
     // =====================================================
+    // 🎯 ШАГ 9: УПРАВЛЕНИЕ КАНАЛАМИ
+    // =====================================================
+
+    /// 🎯 Создать канал
+    Future<Chat?> createChannel({
+        required String name,
+        String? description,
+        bool isPrivate = false,
+        String? emoji,
+        List<int> members = const [],
+    }) async {
+        AppLogger.info('📢 Создание канала: $name');
+
+        try {
+            final response = await ApiService.createChat(
+                type: 'channel',
+                name: name,
+                description: description,
+                isPrivate: isPrivate,
+                emoji: emoji,
+                members: members,
+            );
+
+            if (!response.isSuccess || response.data == null) {
+                AppLogger.warn('Ошибка создания канала: ${response.error}');
+                _chatsError = response.error ?? 'Ошибка создания';
+                notifyListeners();
+                return null;
+            }
+
+            final chatId = response.data!['id'] as int?;
+            if (chatId == null) {
+                AppLogger.warn('Ошибка: нет ID созданного канала');
+                return null;
+            }
+
+            await loadChats();
+
+            final created = _chats.firstWhere(
+                (c) => c.id == chatId,
+                orElse: () => Chat(
+                    id: chatId,
+                    type: 'channel',
+                    name: name,
+                    description: description,
+                    isPrivate: isPrivate,
+                    emoji: emoji,
+                    isMember: true,
+                    myRole: 'admin',
+                ),
+            );
+
+            AppLogger.success('Канал создан: #$chatId');
+            return created;
+        } catch (e) {
+            AppLogger.error('Ошибка создания канала', e);
+            _chatsError = 'Ошибка сети';
+            notifyListeners();
+            return null;
+        }
+    }
+
+    /// 🎯 Редактировать канал
+    Future<bool> updateChannel(
+        int chatId, {
+        String? name,
+        String? description,
+        String? emoji,
+        bool? isPrivate,
+    }) async {
+        AppLogger.info('✏️ Редактирование канала #$chatId');
+
+        try {
+            final response = await ApiService.updateChat(
+                chatId,
+                name: name,
+                description: description,
+                emoji: emoji,
+                isPrivate: isPrivate,
+            );
+
+            if (!response.isSuccess) {
+                AppLogger.warn('Ошибка редактирования: ${response.error}');
+                _chatsError = response.error ?? 'Ошибка редактирования';
+                notifyListeners();
+                return false;
+            }
+
+            final idx = _chats.indexWhere((c) => c.id == chatId);
+            if (idx >= 0) {
+                _chats[idx] = _chats[idx].copyWith(
+                    name: name,
+                    description: description,
+                    emoji: emoji,
+                    isPrivate: isPrivate,
+                );
+            }
+
+            if (_activeChat?.id == chatId) {
+                _activeChat = _activeChat!.copyWith(
+                    name: name,
+                    description: description,
+                    emoji: emoji,
+                    isPrivate: isPrivate,
+                );
+            }
+
+            _chatsError = null;
+            notifyListeners();
+            AppLogger.success('Канал отредактирован');
+            return true;
+        } catch (e) {
+            AppLogger.error('Ошибка редактирования канала', e);
+            _chatsError = 'Ошибка сети';
+            notifyListeners();
+            return false;
+        }
+    }
+
+    /// 🎯 Удалить канал
+    Future<bool> deleteChannel(int chatId) async {
+        AppLogger.info('🗑️ Удаление канала #$chatId');
+
+        try {
+            final response = await ApiService.deleteChat(chatId);
+
+            if (!response.isSuccess) {
+                AppLogger.warn('Ошибка удаления: ${response.error}');
+                _chatsError = response.error ?? 'Ошибка удаления';
+                notifyListeners();
+                return false;
+            }
+
+            _chats.removeWhere((c) => c.id == chatId);
+
+            if (_activeChat?.id == chatId) {
+                closeChat();
+            }
+
+            _chatsError = null;
+            notifyListeners();
+            AppLogger.success('Канал удалён');
+            return true;
+        } catch (e) {
+            AppLogger.error('Ошибка удаления канала', e);
+            _chatsError = 'Ошибка сети';
+            notifyListeners();
+            return false;
+        }
+    }
+
+    /// 🎯 Вступить в публичный канал
+    Future<bool> joinChannel(int chatId) async {
+        AppLogger.info('🚪 Вступление в канал #$chatId');
+
+        try {
+            final response = await ApiService.joinChannel(chatId);
+
+            if (!response.isSuccess) {
+                AppLogger.warn('Ошибка вступления: ${response.error}');
+                _chatsError = response.error ?? 'Ошибка вступления';
+                notifyListeners();
+                return false;
+            }
+
+            final idx = _chats.indexWhere((c) => c.id == chatId);
+            if (idx >= 0) {
+                _chats[idx] = _chats[idx].copyWith(
+                    isMember: true,
+                    myRole: 'member',
+                );
+            }
+
+            _chatsError = null;
+            notifyListeners();
+            AppLogger.success('Вступил в канал #$chatId');
+            return true;
+        } catch (e) {
+            AppLogger.error('Ошибка вступления в канал', e);
+            _chatsError = 'Ошибка сети';
+            notifyListeners();
+            return false;
+        }
+    }
+
+    /// 🎯 Массовое добавление участников
+    Future<Map<String, int>?> addChannelMembers(
+        int chatId,
+        List<int> userIds,
+    ) async {
+        AppLogger.info('👥 Добавление участников в #$chatId: ${userIds.length}');
+
+        try {
+            final response = await ApiService.addChatMembersBulk(chatId, userIds);
+
+            if (!response.isSuccess || response.data == null) {
+                AppLogger.warn('Ошибка добавления: ${response.error}');
+                _chatsError = response.error ?? 'Ошибка добавления';
+                notifyListeners();
+                return null;
+            }
+
+            final data = response.data!;
+            final added = data['added'] as int? ?? 0;
+            final filtered = data['filtered'] as int? ?? 0;
+
+            AppLogger.success('Добавлено: $added, отфильтровано: $filtered');
+
+            final idx = _chats.indexWhere((c) => c.id == chatId);
+            if (idx >= 0) {
+                _chats[idx] = _chats[idx].copyWith(
+                    membersCount: _chats[idx].membersCount + added,
+                );
+            }
+
+            _chatsError = null;
+            notifyListeners();
+            return {'added': added, 'filtered': filtered};
+        } catch (e) {
+            AppLogger.error('Ошибка добавления участников', e);
+            _chatsError = 'Ошибка сети';
+            notifyListeners();
+            return null;
+        }
+    }
+
+    /// 🎯 Удалить участника из канала
+    Future<bool> removeChannelMember(int chatId, int userId) async {
+        AppLogger.info('🗑️ Удаление участника #$userId из #$chatId');
+
+        try {
+            final response = await ApiService.removeChatMember(chatId, userId);
+
+            if (!response.isSuccess) {
+                AppLogger.warn('Ошибка удаления: ${response.error}');
+                _chatsError = response.error ?? 'Ошибка удаления';
+                notifyListeners();
+                return false;
+            }
+
+            final idx = _chats.indexWhere((c) => c.id == chatId);
+            if (idx >= 0 && _chats[idx].membersCount > 0) {
+                _chats[idx] = _chats[idx].copyWith(
+                    membersCount: _chats[idx].membersCount - 1,
+                );
+            }
+
+            _chatsError = null;
+            notifyListeners();
+            AppLogger.success('Участник удалён');
+            return true;
+        } catch (e) {
+            AppLogger.error('Ошибка удаления участника', e);
+            _chatsError = 'Ошибка сети';
+            notifyListeners();
+            return false;
+        }
+    }
+
+    // =====================================================
     // 💬 СООБЩЕНИЯ
     // =====================================================
 
-    /// 🎯 Загрузка ПЕРВОЙ порции сообщений (самые свежие)
     Future<void> _loadMessages(int chatId) async {
         _isLoadingMessages = true;
         _messagesError = null;
-        // 🎯 ПАГИНАЦИЯ: сброс
         _hasMoreOld = true;
         _isLoadingMore = false;
         notifyListeners();
 
         try {
-            // 🎯 ПАГИНАЦИЯ: грузим только первую порцию
             final response = await ApiService.getMessages(
                 chatId,
                 limit: Constants.messagesPageSize,
@@ -283,10 +535,8 @@ class ChatProvider extends ChangeNotifier {
 
                 _maxReadMessageId = result.maxReadId;
                 _myLastReadMessageId = result.myLastReadId;
-                // 🎯 ПАГИНАЦИЯ: запоминаем, есть ли ещё
                 _hasMoreOld = result.hasMore;
 
-                // 🎯 Проставляем isRead для каждого сообщения
                 final myId = _authProvider?.user?.id;
                 _messages = result.messages.map((msg) {
                     final isOwn = msg.senderId == myId;
@@ -317,14 +567,6 @@ class ChatProvider extends ChangeNotifier {
         await _loadMessages(_activeChat!.id);
     }
 
-    // =====================================================
-    // 🎯 ПАГИНАЦИЯ: ПОДГРУЗКА СТАРЫХ
-    // =====================================================
-
-    /// 🎯 Подгрузка СТАРЫХ сообщений (вверх по истории).
-    /// 
-    /// 🛡️ Защита: если сервер вернул пустую порцию или дубликаты,
-    /// принудительно ставим _hasMoreOld = false.
     Future<bool> loadMoreOld() async {
         if (_activeChat == null) return false;
         if (!_hasMoreOld) return false;
@@ -359,7 +601,6 @@ class ChatProvider extends ChangeNotifier {
                 final fresh =
                     older.where((m) => !existingIds.contains(m.id)).toList();
 
-                // 🛡️ ЗАЩИТА: пустая порция / всё — дубликаты
                 if (fresh.isEmpty) {
                     AppLogger.warn(
                         '🛡️ Пагинация: пустая порция '
@@ -398,22 +639,16 @@ class ChatProvider extends ChangeNotifier {
         }
     }
 
-    /// 🎯 Отметить все сообщения в чате как прочитанные
-    /// 
-    /// 🎯 СЧЁТЧИК: обнуляет unreadCount активного чата
-    /// и в _chats, и в _activeChat.
     Future<void> markAsRead() async {
         if (_activeChat == null) return;
         if (_messages.isEmpty) return;
 
         final lastMessageId = _messages.last.id;
 
-        // Если уже прочитано — не отправляем повторно
         if (_myLastReadMessageId >= lastMessageId) return;
 
         _myLastReadMessageId = lastMessageId;
 
-        // 🎯 СЧЁТЧИК: обнуляем unreadCount в списке чатов
         final idx = _chats.indexWhere((c) => c.id == _activeChat!.id);
         if (idx >= 0 && _chats[idx].unreadCount > 0) {
             _chats[idx] = _chats[idx].copyWith(unreadCount: 0);
@@ -429,10 +664,6 @@ class ChatProvider extends ChangeNotifier {
         }
     }
 
-    /// 🎯 Количество непрочитанных в чате
-    /// 
-    /// Теперь просто читает поле из модели Chat — источник истины
-    /// один, никаких глобальных счётчиков.
     int getUnreadCount(Chat chat) => chat.unreadCount;
 
     // =====================================================
@@ -454,9 +685,13 @@ class ChatProvider extends ChangeNotifier {
             return 'В общем чате можно только читать';
         }
 
+        // 🎯 ШАГ 9: канал — пишут все Бойцы+ (участники канала)
         if (chatType == 'channel') {
-            if (user.canCreateFeed || user.canManageRoles) return null;
-            return 'В канале могут писать только админы';
+            if (!_activeChat!.isMember) {
+                return 'Вы не участник канала';
+            }
+            if (user.canWriteGeneral) return null;
+            return 'В канале могут писать только бойцы';
         }
 
         if (chatType == 'group') {
@@ -506,10 +741,6 @@ class ChatProvider extends ChangeNotifier {
             return false;
         }
     }
-
-    // =====================================================
-    // 📤 ЗАГРУЗКА ФАЙЛОВ
-    // =====================================================
 
     Future<bool> sendFile(String localPath, String type) async {
         if (_activeChat == null) {
@@ -574,10 +805,6 @@ class ChatProvider extends ChangeNotifier {
             return false;
         }
     }
-
-    // =====================================================
-    // ↩️ ОТВЕТЫ
-    // =====================================================
 
     void setReplyTo(Message message) {
         _replyToMessage = message;
@@ -808,9 +1035,8 @@ class ChatProvider extends ChangeNotifier {
 
     /// 🎯 Новое сообщение от сервера
     /// 
-    /// 🎯 СЧЁТЧИК:
-    ///   • если это АКТИВНЫЙ чат — добавляем в _messages, markAsRead
-    ///   • если это НЕактивный чат — увеличиваем unreadCount в _chats
+    /// 🎯 ШАГ 9: не увеличиваем unreadCount, если я НЕ участник канала.
+    ///    Я вижу публичный канал в списке, но не «состою» в нём.
     void _handleNewMessage(Map<String, dynamic> data) {
         try {
             final message = Message.fromJson(data);
@@ -818,7 +1044,6 @@ class ChatProvider extends ChangeNotifier {
             final isActive = _activeChat?.id == chatId;
 
             if (isActive) {
-                // 🎯 Активный чат — добавляем сообщение
                 final exists = _messages.any((m) => m.id == message.id);
                 if (!exists) {
                     _messages.add(message);
@@ -826,17 +1051,25 @@ class ChatProvider extends ChangeNotifier {
                     markAsRead();
                 }
             } else {
-                // 🎯 СЧЁТЧИК: неактивный чат — увеличиваем unreadCount
                 final idx = _chats.indexWhere((c) => c.id == chatId);
                 if (idx >= 0) {
-                    final updated = _chats[idx].copyWith(
-                        unreadCount: _chats[idx].unreadCount + 1,
-                    );
-                    _chats[idx] = updated;
-                    AppLogger.debug(
-                        '🔔 +1 непрочитанное в чате ${updated.title} '
-                        '(всего: ${updated.unreadCount})'
-                    );
+                    final chat = _chats[idx];
+
+                    // 🎯 ШАГ 9: не увеличиваем для каналов, где я не участник
+                    if (chat.isChannel && !chat.isMember) {
+                        AppLogger.debug(
+                            '🔔 Пропускаю +1: я не участник канала ${chat.title}'
+                        );
+                    } else {
+                        final updated = chat.copyWith(
+                            unreadCount: chat.unreadCount + 1,
+                        );
+                        _chats[idx] = updated;
+                        AppLogger.debug(
+                            '🔔 +1 непрочитанное в чате ${updated.title} '
+                            '(всего: ${updated.unreadCount})'
+                        );
+                    }
                 }
             }
 
@@ -929,10 +1162,6 @@ class ChatProvider extends ChangeNotifier {
         _removeReactionLocally(messageId, userId, emoji);
     }
 
-    /// 🎯 Кто-то прочитал сообщение (галочки на МОИХ сообщениях)
-    /// 
-    /// 🎯 СЧЁТЧИК: не трогаем unreadCount (он про мои непрочитанные,
-    /// а это событие про чужие). Просто обновляем галочки.
     void _handleMessageRead(Map<String, dynamic> data) {
         final chatId = data['chatId'] as int?;
         final userId = data['userId'] as int?;
@@ -961,14 +1190,6 @@ class ChatProvider extends ChangeNotifier {
         }
     }
 
-    // =====================================================
-    // 🔄 ПРЕВЬЮ
-    // =====================================================
-
-    /// 🎯 Обновление превью чата
-    /// 
-    /// 🎯 СЧЁТЧИК: НЕ трогаем unreadCount здесь — только lastMessage*.
-    /// Инкремент происходит в _handleNewMessage, обнуление — в markAsRead.
     void _updateChatPreview(int chatId, Message message) {
         final index = _chats.indexWhere((c) => c.id == chatId);
         if (index >= 0) {

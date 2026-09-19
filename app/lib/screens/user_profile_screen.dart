@@ -1,8 +1,10 @@
 // =====================================================
 // 👤 BMSChat — ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ
 // =====================================================
-// Показывает данные пользователя + кнопки действий
-// (зависят от прав текущего пользователя).
+// 🎯 ПРАВКИ 2026-09-19:
+//   • «Подтвердить» — по роли Новобранец (не по is_approved)
+//   • «Назначить командиром» — исключая Новобранца и Админа
+//   • «Понизить до новобранца» — исключая Новобранца
 // =====================================================
 
 import 'package:flutter/material.dart';
@@ -48,7 +50,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             _error = null;
         });
 
-        // Сначала пробуем из провайдера (быстро)
         final usersProvider = Provider.of<UsersProvider>(context, listen: false);
         final cached = usersProvider.getUserById(widget.userId);
 
@@ -59,7 +60,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             });
         }
 
-        // Затем обновляем с сервера
         final response = await ApiService.getUser(widget.userId);
 
         if (!mounted) return;
@@ -145,7 +145,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     }
 
     // =====================================================
-    // 👤 ШАПКА (аватар, имя, username, статус)
+    // 👤 ШАПКА
     // =====================================================
     Widget _buildHeader() {
         final user = _user!;
@@ -387,7 +387,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         final canAssign = me?.canAssignCommanders ?? false;
 
         // 🔒 ЗАЩИТА: target — админ, а я — не сам админ
-        // (id 1 — оригинальный admin, его нельзя трогать)
         final targetIsAdmin = user.isAdmin;
         final iAmOriginalAdmin = me?.id == 1;
 
@@ -432,8 +431,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             ));
         }
 
-        // Подтвердить (если есть право и пользователь не подтверждён)
-        if (!user.isApproved && canApprove) {
+        // 🎯 ПРАВКА 1: «Подтвердить» — по РОЛИ Новобранец, не по is_approved
+        // Показывается для любого Новобранца (в т.ч. если is_approved = false).
+        // Скрывается для не-Новобранцев.
+        if (user.isRecruit && canApprove && !isMe) {
             buttons.add(_actionButton(
                 icon: Icons.check_circle_outline,
                 label: 'Подтвердить',
@@ -442,8 +443,13 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             ));
         }
 
-        // Назначить командиром (только админ, если ещё не командир)
-        if (canAssign && !user.isCommander && user.isApproved && !isMe) {
+        // 🎯 ПРАВКА 2: «Назначить командиром» — исключаем Новобранца и Админа
+        // (isApproved больше не проверяем напрямую — у Бойца/Командира он всегда true)
+        if (canAssign &&
+            !user.isCommander &&
+            !user.isRecruit &&
+            !user.isAdmin &&
+            !isMe) {
             buttons.add(_actionButton(
                 icon: Icons.military_tech,
                 label: 'Назначить командиром',
@@ -464,8 +470,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             ));
         }
 
-        // Понизить до новобранца (админ или командир, не себя, не админа)
-        if (canApprove && !isMe && !user.isAdmin) {
+        // 🎯 ПРАВКА 3: «Понизить до новобранца» — исключаем Новобранца
+        // (нельзя понизить того, кто уже Новобранец)
+        if (canApprove && !isMe && !user.isAdmin && !user.isRecruit) {
             buttons.add(_actionButton(
                 icon: Icons.arrow_downward,
                 label: 'Понизить до новобранца',
@@ -534,7 +541,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     Future<void> _openPrivateChat(User user) async {
         setState(() => _actionInProgress = true);
 
-        // Берём провайдеры ДО await — чтобы не использовать context после
         final chatProvider = Provider.of<ChatProvider>(context, listen: false);
 
         try {
@@ -549,7 +555,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             }
 
             final chatData = response.data!;
-            // Сервер возвращает { chat_id: ..., existed: ... }
             final chatId = chatData['chat_id'] ??
                 chatData['chat']?['id'] ??
                 chatData['id'];
@@ -564,7 +569,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
             if (!mounted) return;
 
-            // 📱 Переходим в чат (профиль остаётся в стеке — как в Telegram)
             Navigator.push(
                 context,
                 MaterialPageRoute(

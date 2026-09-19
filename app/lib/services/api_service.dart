@@ -1,6 +1,8 @@
 // =====================================================
 // 🌐 BMSChat — СЕРВИС API
 // =====================================================
+// 🎯 ШАГ 8: методы для управления каналами
+// =====================================================
 
 import 'dart:async';
 import 'dart:convert';
@@ -424,10 +426,13 @@ class ApiService {
         return ApiResponse.error(response.error!, statusCode: response.statusCode);
     }
 
+    // 🎯 ШАГ 8: обновлён createChat
     static Future<ApiResponse<Map<String, dynamic>>> createChat({
         required String type,
         required String name,
         String? description,
+        bool isPrivate = false,
+        String? emoji,
         List<int>? members,
     }) async {
         final response = await _post(
@@ -436,6 +441,8 @@ class ApiService {
                 'type': type,
                 'name': name,
                 if (description != null) 'description': description,
+                'isPrivate': isPrivate,
+                if (emoji != null) 'emoji': emoji,
                 if (members != null) 'members': members,
             },
         );
@@ -447,16 +454,111 @@ class ApiService {
     }
 
     // =====================================================
+    // 🎯 ШАГ 8: УПРАВЛЕНИЕ КАНАЛАМИ
+    // =====================================================
+
+    /// 🎯 Редактирование канала
+    /// 
+    /// Body:
+    ///   • name: string | null
+    ///   • description: string | null
+    ///   • emoji: string | null
+    ///   • isPrivate: bool | null
+    /// 
+    /// Права: Админ + Командир системы + Создатель
+    static Future<ApiResponse<void>> updateChat(
+        int chatId, {
+        String? name,
+        String? description,
+        String? emoji,
+        bool? isPrivate,
+    }) async {
+        final response = await _put(
+            ApiEndpoints.chat(chatId),
+            body: {
+                if (name != null) 'name': name,
+                if (description != null) 'description': description,
+                if (emoji != null) 'emoji': emoji,
+                if (isPrivate != null) 'isPrivate': isPrivate,
+            },
+        );
+
+        if (response.isSuccess) {
+            return ApiResponse.success(null);
+        }
+        return ApiResponse.error(response.error!, statusCode: response.statusCode);
+    }
+
+    /// 🎯 Удаление канала (soft delete — is_active = false)
+    /// 
+    /// Права: Админ + Командир системы + Создатель
+    static Future<ApiResponse<void>> deleteChat(int chatId) async {
+        final response = await _delete(ApiEndpoints.chat(chatId));
+
+        if (response.isSuccess) {
+            return ApiResponse.success(null);
+        }
+        return ApiResponse.error(response.error!, statusCode: response.statusCode);
+    }
+
+    /// 🎯 Вступить в публичный канал
+    /// 
+    /// Условия:
+    ///   • Публичный канал (is_private = false)
+    ///   • Я Боец+ (can_write_general)
+    ///   • Я ещё не участник
+    static Future<ApiResponse<void>> joinChannel(int chatId) async {
+        final response = await _post('${ApiEndpoints.chat(chatId)}/join');
+
+        if (response.isSuccess) {
+            return ApiResponse.success(null);
+        }
+        return ApiResponse.error(response.error!, statusCode: response.statusCode);
+    }
+
+    /// 🎯 Массовое добавление участников в канал
+    /// 
+    /// Возвращает:
+    ///   • added: int — сколько реально добавлено
+    ///   • filtered: int — сколько отфильтровано
+    static Future<ApiResponse<Map<String, dynamic>>> addChatMembersBulk(
+        int chatId,
+        List<int> userIds,
+    ) async {
+        final response = await _post(
+            '${ApiEndpoints.chat(chatId)}/members/bulk',
+            body: {'userIds': userIds},
+        );
+
+        if (response.isSuccess) {
+            return ApiResponse.success(response.data as Map<String, dynamic>);
+        }
+        return ApiResponse.error(response.error!, statusCode: response.statusCode);
+    }
+
+    /// 🎯 Удалить участника из канала
+    /// 
+    /// Права:
+    ///   • Приватный канал: только создатель
+    ///   • Публичный канал: создатель + Админ/Командир системы
+    static Future<ApiResponse<void>> removeChatMember(
+        int chatId,
+        int userId,
+    ) async {
+        final response = await _delete(
+            '${ApiEndpoints.chat(chatId)}/members/$userId',
+        );
+
+        if (response.isSuccess) {
+            return ApiResponse.success(null);
+        }
+        return ApiResponse.error(response.error!, statusCode: response.statusCode);
+    }
+
+    // =====================================================
     // 📝 СООБЩЕНИЯ
     // =====================================================
 
-    /// Загрузить сообщения чата
-    /// 
-    /// Возвращает `MessagesResponse` с полями:
-    ///   • messages — список
-    ///   • hasMore — есть ли ещё
-    ///   • maxReadId — макс. ID, прочитанный другими
-    ///   • myLastReadId — мой последний прочитанный
     static Future<ApiResponse<MessagesResponse>> getMessages(
         int chatId, {
         int limit = 50,

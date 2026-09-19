@@ -1,5 +1,11 @@
 // =====================================================
-// 💬 BMSChat — ЭКРАН СПИСКА ЧАТОВ (С НЕПРОЧИТАННЫМИ)
+// 💬 BMSChat — ЭКРАН СПИСКА ЧАТОВ
+// =====================================================
+// 🎯 ШАГ 14: управление каналами
+//   • Кнопка «+» в AppBar (для canCreateFeed)
+//   • Тап на публичный канал без участия → «Вступить?»
+//   • Иконка канала через displayEmoji
+//   • Бейдж «Вступить» для публичных без участия
 // =====================================================
 
 import 'package:flutter/material.dart';
@@ -12,6 +18,7 @@ import '../providers/users_provider.dart';
 import '../themes/rasta_theme.dart';
 import '../utils/app_logger.dart';
 import 'chat_screen.dart';
+import 'create_channel_screen.dart';
 import 'profile_screen.dart';
 import 'users_screen.dart';
 
@@ -53,6 +60,34 @@ class _ChatsScreenState extends State<ChatsScreen> {
     Future<void> _openChat(Chat chat) async {
         AppLogger.info('📂 Открытие: ${chat.title}');
 
+        // 🎯 ШАГ 14: если это канал, где я НЕ участник — предложить вступить
+        if (chat.isChannel && !chat.isMember) {
+            if (chat.isPrivate) {
+                _showInfo('Это приватный канал — нужно приглашение');
+                return;
+            }
+
+            final shouldJoin = await _confirmJoin(chat);
+            if (shouldJoin != true) return;
+            if (!mounted) return;   // 🎯 защита от async gap
+
+            final chatProvider =
+                Provider.of<ChatProvider>(context, listen: false);
+            final joined = await chatProvider.joinChannel(chat.id);
+
+            if (!mounted) return;
+
+            if (!joined) {
+                final reason = chatProvider.chatsError ?? 'неизвестная ошибка';
+                _showInfo('Не удалось вступить: $reason');
+                return;
+            }
+
+            _showInfo('Вы вступили в канал');
+        }
+
+        if (!mounted) return;   // 🎯 защита от async gap
+
         final chatProvider = Provider.of<ChatProvider>(context, listen: false);
         await chatProvider.openChat(chat.id);
 
@@ -79,6 +114,70 @@ class _ChatsScreenState extends State<ChatsScreen> {
                     );
                 },
                 transitionDuration: const Duration(milliseconds: 300),
+            ),
+        );
+    }
+
+    // ============================================
+    // 📢 СОЗДАНИЕ КАНАЛА
+    // ============================================
+    Future<void> _openCreateChannel() async {
+        final created = await Navigator.push<Chat>(
+            context,
+            MaterialPageRoute(
+                builder: (_) => const CreateChannelScreen(),
+            ),
+        );
+
+        if (!mounted) return;
+
+        if (created != null) {
+            final chatProvider =
+                Provider.of<ChatProvider>(context, listen: false);
+            await chatProvider.loadChats();
+
+            if (!mounted) return;
+
+            await _openChat(created);
+        }
+    }
+
+    // ============================================
+    // 🎯 ПОДТВЕРЖДЕНИЕ ВСТУПЛЕНИЯ
+    // ============================================
+    Future<bool?> _confirmJoin(Chat chat) {
+        return showDialog<bool>(
+            context: context,
+            builder: (_) => AlertDialog(
+                backgroundColor: RastaTheme.surface,
+                title: const Text(
+                    'Вступить в канал?',
+                    style: TextStyle(color: RastaTheme.textPrimary),
+                ),
+                content: Text(
+                    'Вы станете участником канала «${chat.title}» '
+                    'и сможете писать сообщения.',
+                    style: const TextStyle(color: RastaTheme.textSecondary),
+                ),
+                actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text(
+                            'Отмена',
+                            style: TextStyle(color: RastaTheme.textMuted),
+                        ),
+                    ),
+                    TextButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text(
+                            'Вступить',
+                            style: TextStyle(
+                                color: RastaTheme.rastaYellow,
+                                fontWeight: FontWeight.w600,
+                            ),
+                        ),
+                    ),
+                ],
             ),
         );
     }
@@ -147,6 +246,8 @@ class _ChatsScreenState extends State<ChatsScreen> {
 
     @override
     Widget build(BuildContext context) {
+        final auth = Provider.of<AuthProvider>(context);
+
         return Scaffold(
             backgroundColor: RastaTheme.background,
             appBar: AppBar(
@@ -164,6 +265,8 @@ class _ChatsScreenState extends State<ChatsScreen> {
                     ],
                 ),
                 actions: [
+                    // 🎯 ШАГ 14: кнопка «+» для создания канала
+                    if (auth.canCreateFeed) _buildCreateChannelButton(),
                     _buildUsersButton(),
                     IconButton(
                         icon: const Icon(Icons.person_outline, size: 26),
@@ -192,9 +295,10 @@ class _ChatsScreenState extends State<ChatsScreen> {
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
                                     CircularProgressIndicator(
-                                        valueColor: AlwaysStoppedAnimation<Color>(
-                                            RastaTheme.rastaYellow,
-                                        ),
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                                RastaTheme.rastaYellow,
+                                            ),
                                     ),
                                     SizedBox(height: 16),
                                     Text(
@@ -219,9 +323,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
 
                     return Stack(
                         children: [
-                            // ─────────────────────────────
-                            // СПИСОК ЧАТОВ
-                            // ─────────────────────────────
                             RefreshIndicator(
                                 onRefresh: _onRefresh,
                                 color: RastaTheme.rastaYellow,
@@ -240,9 +341,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
                                 ),
                             ),
 
-                            // ─────────────────────────────
-                            // ЛОГОТИП СНИЗУ (ярче в 2 раза)
-                            // ─────────────────────────────
                             Positioned(
                                 bottom: -40,
                                 left: 0,
@@ -250,7 +348,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
                                 child: IgnorePointer(
                                     child: Center(
                                         child: Opacity(
-                                            opacity: 0.16,   // ← было 0.08
+                                            opacity: 0.16,
                                             child: ClipOval(
                                                 child: Image.asset(
                                                     'assets/images/logo.png',
@@ -272,6 +370,17 @@ class _ChatsScreenState extends State<ChatsScreen> {
                     );
                 },
             ),
+        );
+    }
+
+    // ============================================
+    // ➕ КНОПКА «СОЗДАТЬ КАНАЛ»
+    // ============================================
+    Widget _buildCreateChannelButton() {
+        return IconButton(
+            icon: const Icon(Icons.add_circle_outline, size: 26),
+            tooltip: 'Создать канал',
+            onPressed: _openCreateChannel,
         );
     }
 
@@ -331,6 +440,9 @@ class _ChatsScreenState extends State<ChatsScreen> {
         final hasUnread = provider.getUnreadCount(chat) > 0;
         final unreadCount = provider.getUnreadCount(chat);
 
+        // 🎯 ШАГ 14: не в канале?
+        final isNotMember = chat.isChannel && !chat.isMember;
+
         return InkWell(
             onTap: () => _openChat(chat),
             child: Container(
@@ -381,6 +493,30 @@ class _ChatsScreenState extends State<ChatsScreen> {
                                                         RastaTheme.background,
                                                     width: 2.5,
                                                 ),
+                                            ),
+                                        ),
+                                    ),
+                                // 🎯 ШАГ 14: замок для не-участников приватных
+                                if (isNotMember && chat.isPrivate)
+                                    Positioned(
+                                        right: 2,
+                                        bottom: 2,
+                                        child: Container(
+                                            width: 22,
+                                            height: 22,
+                                            decoration: BoxDecoration(
+                                                shape: BoxShape.circle,
+                                                color: RastaTheme.surface,
+                                                border: Border.all(
+                                                    color: RastaTheme
+                                                        .background,
+                                                    width: 2,
+                                                ),
+                                            ),
+                                            child: const Icon(
+                                                Icons.lock,
+                                                size: 12,
+                                                color: RastaTheme.textMuted,
                                             ),
                                         ),
                                     ),
@@ -477,7 +613,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
                         ),
 
                         // ─────────────────────────────
-                        // БЕЙДЖ НЕПРОЧИТАННЫХ
+                        // БЕЙДЖИ
                         // ─────────────────────────────
                         if (hasUnread) ...[
                             const SizedBox(width: 8),
@@ -512,6 +648,28 @@ class _ChatsScreenState extends State<ChatsScreen> {
                                     textAlign: TextAlign.center,
                                 ),
                             ),
+                        ] else if (isNotMember) ...[
+                            // 🎯 ШАГ 14: значок «можно вступить»
+                            const SizedBox(width: 8),
+                            Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                    color: RastaTheme.rastaGreen
+                                        .withValues(alpha: 0.2),
+                                    borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: const Text(
+                                    'Вступить',
+                                    style: TextStyle(
+                                        fontSize: 11,
+                                        color: RastaTheme.rastaGreen,
+                                        fontWeight: FontWeight.w700,
+                                    ),
+                                ),
+                            ),
                         ] else if (chat.isAdmin) ...[
                             const SizedBox(width: 8),
                             const Icon(
@@ -527,7 +685,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
     }
 
     // ============================================
-    // 🎨 ИКОНКА ЧАТА (логотип или эмодзи)
+    // 🎨 ИКОНКА ЧАТА
     // ============================================
     Widget _buildChatIcon(Chat chat) {
         if (chat.useLogoImage) {
@@ -547,8 +705,11 @@ class _ChatsScreenState extends State<ChatsScreen> {
             );
         }
 
+        // 🎯 ШАГ 14: для каналов — displayEmoji (учитывает emoji или дефолт)
+        final icon = chat.isChannel ? chat.displayEmoji : chat.icon;
+
         return Text(
-            chat.icon,
+            icon,
             style: const TextStyle(fontSize: 34),
         );
     }
@@ -598,7 +759,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
     }
 
     // =====================================================
-    // 📭 ПУСТО (с логотипом)
+    // 📭 ПУСТО
     // =====================================================
     Widget _buildEmptyState() {
         return Center(
@@ -682,6 +843,20 @@ class _ChatsScreenState extends State<ChatsScreen> {
                         ),
                     ],
                 ),
+            ),
+        );
+    }
+
+    // ============================================
+    // 🔔 SNACKBAR
+    // ============================================
+    void _showInfo(String message) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+                content: Text(message),
+                backgroundColor: RastaTheme.surfaceSecondary,
+                behavior: SnackBarBehavior.floating,
             ),
         );
     }

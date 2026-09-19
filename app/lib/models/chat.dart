@@ -2,8 +2,9 @@
 // 💬 BMSChat — МОДЕЛЬ ЧАТА
 // =====================================================
 // 🎯 unreadCount: количество непрочитанных сообщений
-//    Парсит и unread_count, и unreadCount — на случай
-//    разного именования на сервере.
+// 🎯 isPrivate: приватный ли канал
+// 🎯 isMember: я участник чата?
+// 🎯 emoji: эмодзи-аватар (для каналов)
 // =====================================================
 
 class Chat {
@@ -34,11 +35,21 @@ class Chat {
     final List<ChatMember> members;
 
     /// 🎯 Количество непрочитанных сообщений
-    /// Обновляется:
-    ///   • из ответа сервера (`unread_count` / `unreadCount`)
-    ///   • локально при новом сообщении (в неактивный чат)
-    ///   • обнуляется при markAsRead
     final int unreadCount;
+
+    // =====================================================
+    // 🎯 ШАГ 7: НОВЫЕ ПОЛЯ ДЛЯ КАНАЛОВ
+    // =====================================================
+
+    /// 🎯 Приватный ли канал? (только приглашённые видят/читают/пишут)
+    final bool isPrivate;
+
+    /// 🎯 Я участник чата? (для каналов — критично: не-участник видит,
+    /// но не может открыть/писать до «Вступить»)
+    final bool isMember;
+
+    /// 🎯 Эмодзи-аватар (для каналов). Если null — используем дефолт '📢'
+    final String? emoji;
 
     // =====================================================
     // 🏗️ КОНСТРУКТОР
@@ -62,6 +73,10 @@ class Chat {
         this.lastMessageAt,
         this.members = const [],
         this.unreadCount = 0,
+        // 🎯 ШАГ 7:
+        this.isPrivate = false,
+        this.isMember = false,
+        this.emoji,
     });
 
     // =====================================================
@@ -88,10 +103,13 @@ class Chat {
             members: (json['members'] as List<dynamic>?)
                 ?.map((m) => ChatMember.fromJson(m as Map<String, dynamic>))
                 .toList() ?? [],
-            // 🎯 Парсим оба варианта имени
             unreadCount: json['unread_count'] as int?
                 ?? json['unreadCount'] as int?
                 ?? 0,
+            // 🎯 ШАГ 7:
+            isPrivate: _intToBool(json['is_private']),
+            isMember: _intToBool(json['is_member']),
+            emoji: _parseEmoji(json['emoji']),
         );
     }
 
@@ -116,8 +134,11 @@ class Chat {
             'last_message_id': lastMessageId,
             'last_message_text': lastMessageText,
             'last_message_at': lastMessageAt?.toIso8601String(),
-            // 🎯 Пишем со snake_case (совместимо с бэком)
             'unread_count': unreadCount,
+            // 🎯 ШАГ 7:
+            'is_private': isPrivate ? 1 : 0,
+            'is_member': isMember ? 1 : 0,
+            'emoji': emoji,
         };
     }
 
@@ -143,6 +164,10 @@ class Chat {
         DateTime? lastMessageAt,
         List<ChatMember>? members,
         int? unreadCount,
+        // 🎯 ШАГ 7:
+        bool? isPrivate,
+        bool? isMember,
+        String? emoji,
     }) {
         return Chat(
             id: id ?? this.id,
@@ -162,6 +187,10 @@ class Chat {
             lastMessageAt: lastMessageAt ?? this.lastMessageAt,
             members: members ?? this.members,
             unreadCount: unreadCount ?? this.unreadCount,
+            // 🎯 ШАГ 7:
+            isPrivate: isPrivate ?? this.isPrivate,
+            isMember: isMember ?? this.isMember,
+            emoji: emoji ?? this.emoji,
         );
     }
 
@@ -169,32 +198,82 @@ class Chat {
     // 🛠️ ГЕТТЕРЫ
     // =====================================================
 
-    bool get isPrivate => type == 'private';
+    bool get isPrivateChat => type == 'private';
     bool get isGeneral => type == 'general';
     bool get isGroup => type == 'group';
     bool get isChannel => type == 'channel';
 
     bool get isAdmin => myRole == 'admin';
-    bool get isMember => myRole == 'member';
+    bool get isMemberOfChat => myRole == 'member';
 
     /// Есть ли непрочитанные?
     bool get hasUnread => unreadCount > 0;
 
+    // =====================================================
+    // 🎯 ШАГ 7: НОВЫЕ ГЕТТЕРЫ ДЛЯ КАНАЛОВ
+    // =====================================================
+
+    /// 🎯 Показывать ли эмодзи-аватар?
+    /// Для каналов с emoji — да. Для остальных — нет.
+    bool get hasEmojiAvatar => isChannel && emoji != null && emoji!.isNotEmpty;
+
+    /// 🎯 Эмодзи-аватар или дефолт
+    String get displayEmoji {
+        if (emoji != null && emoji!.isNotEmpty && emoji != '??') {
+            return emoji!;
+        }
+        if (isChannel) return '📢';
+        return icon;
+    }
+
+    /// 🎯 Может ли текущий пользователь писать в этот чат?
+    /// 
+    /// Зависит от:
+    ///   • типа чата
+    ///   • прав пользователя (can_write_general)
+    ///   • участия в канале (isMember)
+    /// 
+    /// ⚠️ Это лишь UI-подсказка. Финальное решение — на бэке
+    /// через `checkWriteAccess`. Здесь — для отрисовки кнопки.
+    bool canWriteChannel({
+        required bool canWriteGeneral,
+        required bool isAdmin,
+    }) {
+        if (!isChannel) return false;
+        if (isAdmin) return true;
+        if (!canWriteGeneral) return false; // Новобранец — не пишет
+        return isMember; // Боец+ пишет, только если в канале
+    }
+
+    /// 🎯 Может ли текущий пользователь вступить в канал?
+    /// 
+    /// Публичный канал + я Боец+ + я не участник.
+    bool canJoinChannel({
+        required bool canWriteGeneral,
+        required bool isAdmin,
+    }) {
+        if (!isChannel) return false;
+        if (isMember) return false; // уже участник
+        if (isPrivate) return false; // в приватный не вступить
+        return canWriteGeneral || isAdmin;
+    }
+
+    // =====================================================
+    // 🎨 ИКОНКА ЧАТА (для не-каналов)
+    // =====================================================
+
     /// Отображаемое имя чата
     String get title {
-        if (isPrivate && displayName != null && displayName!.isNotEmpty) {
+        if (isPrivateChat && displayName != null && displayName!.isNotEmpty) {
             return displayName!;
         }
         if (name != null && name!.isNotEmpty) return name!;
         if (isGeneral) return 'Общий чат';
-        if (isPrivate) return 'Личный чат';
+        if (isPrivateChat) return 'Личный чат';
         return 'Чат #$id';
     }
 
-    // =====================================================
-    // 🎨 ИКОНКА ЧАТА
-    // =====================================================
-
+    /// Эмодзи-иконка (для не-каналов)
     String get icon {
         switch (type) {
             case 'general':
@@ -210,10 +289,8 @@ class Chat {
         }
     }
 
-    /// Использовать логотип вместо эмодзи?
     bool get useLogoImage => type == 'general';
 
-    /// Текст последнего сообщения (сокращённый)
     String get lastMessagePreview {
         if (lastMessageText == null || lastMessageText!.isEmpty) {
             return 'Нет сообщений';
@@ -228,7 +305,6 @@ class Chat {
         return text;
     }
 
-    /// Время последнего сообщения
     String get lastMessageTime {
         if (lastMessageAt == null) return '';
 
@@ -254,7 +330,6 @@ class Chat {
         return '$day.$month';
     }
 
-    /// Инициалы для аватарки-заглушки
     String get initials {
         final source = displayName ?? name;
         if (source == null || source.isEmpty) return '?';
@@ -283,6 +358,16 @@ class Chat {
         return null;
     }
 
+    /// 🎯 Парсинг эмодзи: если null, пусто или '??' — возвращаем null.
+    /// Фронт подставит дефолт через `displayEmoji`.
+    static String? _parseEmoji(dynamic value) {
+        if (value == null) return null;
+        final str = value.toString().trim();
+        if (str.isEmpty) return null;
+        if (str == '??' || str == '?') return null;
+        return str;
+    }
+
     // =====================================================
     // 🔍 ОТЛАДКА
     // =====================================================
@@ -290,7 +375,8 @@ class Chat {
     @override
     String toString() {
         return 'Chat(id: $id, type: $type, title: $title, '
-            'members: $membersCount, unread: $unreadCount)';
+            'members: $membersCount, unread: $unreadCount, '
+            'isPrivate: $isPrivate, isMember: $isMember)';
     }
 
     @override
@@ -299,15 +385,20 @@ class Chat {
         return other is Chat &&
             other.id == id &&
             other.lastMessageId == lastMessageId &&
-            other.unreadCount == unreadCount;
+            other.unreadCount == unreadCount &&
+            other.isPrivate == isPrivate &&
+            other.isMember == isMember &&
+            other.emoji == emoji;
     }
 
     @override
-    int get hashCode => Object.hash(id, lastMessageId, unreadCount);
+    int get hashCode => Object.hash(
+        id, lastMessageId, unreadCount, isPrivate, isMember, emoji,
+    );
 }
 
 // =====================================================
-// 👥 МОДЕЛЬ УЧАСТНИКА ЧАТА
+// 👥 МОДЕЛЬ УЧАСТНИКА ЧАТА (без изменений)
 // =====================================================
 
 class ChatMember {
