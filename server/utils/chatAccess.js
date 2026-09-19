@@ -3,9 +3,12 @@
 // =====================================================
 // ⚠️ Все функции — async (await в роутах обязателен!)
 //
-// 🎯 ПАТЧ 2026-09-19:
-//   • checkWriteAccess → канал: пишут все Бойцы+ (участники)
-//     (раньше — только can_create_feed = админ/командир)
+// История патчей:
+//   🎯 2026-09-19 (Шаг 2):
+//      • checkWriteAccess → канал: пишут все Бойцы+ (участники)
+//   🎯 2026-09-19 (Шаг 3):
+//      • canManageChannel — Админ/Командир системы + Создатель
+//      • canManageChannelMembers — учитывает is_private
 // =====================================================
 
 const { pool } = require('../database/init');
@@ -64,10 +67,7 @@ async function checkWriteAccess(chatId, userId) {
     const perms = await getMergedPermissions(userId);
 
     switch (access.chatType) {
-        // 🎯 ПАТЧ: канал — пишут все Бойцы+ (участники канала).
-        // checkChatAccess уже проверил, что я участник.
-        // can_write_general = true у Бойца/Командира/Админа,
-        // false у Новобранца.
+        // 🎯 ПАТЧ (Шаг 2): канал — пишут все Бойцы+ (участники канала).
         case 'channel': {
             if (perms.can_write_general) return { allowed: true };
             return { allowed: false, reason: 'В канале могут писать только бойцы' };
@@ -136,6 +136,67 @@ async function isCommanderOrHigher(userId) {
         LIMIT 1
     `, [userId]);
     return result.rows.length > 0;
+}
+
+// =====================================================
+// 🎯 ШАГ 3: УПРАВЛЕНИЕ КАНАЛОМ
+// =====================================================
+/**
+ * 🎯 Может ли пользователь управлять каналом (редактировать/удалять)?
+ *   • Админ системы — да
+ *   • Командир системы — да
+ *   • Создатель канала — да
+ *   • Остальные — нет
+ * 
+ * Используется в: PUT /api/chats/:id, DELETE /api/chats/:id
+ */
+async function canManageChannel(chatId, userId) {
+    if (!chatId || !userId) return false;
+
+    const chatResult = await pool.query(
+        'SELECT created_by, type FROM chats WHERE id = $1',
+        [chatId]
+    );
+
+    if (chatResult.rows.length === 0) return false;
+    if (chatResult.rows[0].type !== 'channel') return false;
+
+    // Создатель — всегда
+    if (chatResult.rows[0].created_by === userId) return true;
+
+    // Админ/Командир системы
+    return await isCommanderOrHigher(userId);
+}
+
+/**
+ * 🎯 Может ли пользователь добавлять/удалять участников канала?
+ *   • Приватный канал: ТОЛЬКО создатель
+ *   • Публичный канал: создатель + Админ/Командир системы
+ * 
+ * Используется в: POST /api/chats/:id/members/bulk,
+ *                 DELETE /api/chats/:id/members/:userId
+ */
+async function canManageChannelMembers(chatId, userId) {
+    if (!chatId || !userId) return false;
+
+    const chatResult = await pool.query(
+        'SELECT created_by, type, is_private FROM chats WHERE id = $1',
+        [chatId]
+    );
+
+    if (chatResult.rows.length === 0) return false;
+
+    const chat = chatResult.rows[0];
+    if (chat.type !== 'channel') return false;
+
+    // Создатель — всегда может
+    if (chat.created_by === userId) return true;
+
+    // Приватный канал — только создатель (уже проверено, что не он)
+    if (chat.is_private === true) return false;
+
+    // Публичный канал — Админ/Командир системы тоже могут
+    return await isCommanderOrHigher(userId);
 }
 
 // =====================================================
@@ -272,6 +333,8 @@ module.exports = {
     checkDeleteAccess,
     isChatAdmin,
     isCommanderOrHigher,
+    canManageChannel,           // 🎯 ШАГ 3
+    canManageChannelMembers,    // 🎯 ШАГ 3
     getChatMemberIds,
     getChatMembers,
     getOtherPrivateMember,

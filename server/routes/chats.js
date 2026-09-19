@@ -5,7 +5,8 @@
 //   🎯 2026-09-19 (Шаг 4): GET /api/chats — is_member, is_private, emoji
 //   🎯 2026-09-19 (Шаг 5): POST /api/chats — isPrivate, emoji, фильтр
 //   🎯 2026-09-19 (Шаг 6): PUT/DELETE/:id, join, members/bulk
-//   🎯 2026-09-19 (Диагностика): console.error в PUT/DELETE catch
+//   🎯 2026-09-19: console.log для диагностики в stdout (Onreza показывает)
+//                  + валидация chatId во всех :id роутах
 // =====================================================
 
 const express = require('express');
@@ -87,6 +88,8 @@ router.get('/', authMiddleware, async (req, res) => {
 
         res.json({ chats: result.rows });
     } catch (error) {
+        console.log('🔴 GET /api/chats ERROR:', error.message);
+        console.log('STACK:', error.stack);
         logger.error('Ошибка /chats', error);
         res.status(500).json({ error: 'Ошибка сервера' });
     }
@@ -203,6 +206,8 @@ router.post('/', authMiddleware, async (req, res) => {
             },
         });
     } catch (error) {
+        console.log('🔴 POST /api/chats ERROR:', error.message);
+        console.log('STACK:', error.stack);
         logger.error('Ошибка создания чата', error);
         res.status(500).json({ error: 'Ошибка сервера' });
     }
@@ -214,6 +219,9 @@ router.post('/', authMiddleware, async (req, res) => {
 router.post('/private/:userId', authMiddleware, async (req, res) => {
     try {
         const otherUserId = parseInt(req.params.userId, 10);
+        if (!Number.isInteger(otherUserId) || otherUserId <= 0) {
+            return res.status(400).json({ error: 'Некорректный ID пользователя' });
+        }
 
         if (otherUserId === req.user.id) {
             return res.status(400).json({ error: 'Нельзя открыть чат с самим собой' });
@@ -255,6 +263,8 @@ router.post('/private/:userId', authMiddleware, async (req, res) => {
 
         res.status(201).json({ chat_id: chatId, existed: false });
     } catch (error) {
+        console.log('🔴 POST /api/chats/private ERROR:', error.message);
+        console.log('STACK:', error.stack);
         logger.error('Ошибка личного чата', error);
         res.status(500).json({ error: 'Ошибка сервера' });
     }
@@ -266,6 +276,9 @@ router.post('/private/:userId', authMiddleware, async (req, res) => {
 router.post('/:id/join', authMiddleware, async (req, res) => {
     try {
         const chatId = parseInt(req.params.id, 10);
+        if (!Number.isInteger(chatId) || chatId <= 0) {
+            return res.status(400).json({ error: 'Некорректный ID чата' });
+        }
 
         const chatResult = await pool.query(`
             SELECT id, type, is_private, is_active 
@@ -327,6 +340,8 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
 
         res.json({ message: 'Вы вступили в канал' });
     } catch (error) {
+        console.log('🔴 POST /api/chats/:id/join ERROR:', error.message);
+        console.log('STACK:', error.stack);
         logger.error('Ошибка вступления в канал', error);
         res.status(500).json({ error: 'Ошибка сервера' });
     }
@@ -338,6 +353,10 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
 router.post('/:id/members/bulk', authMiddleware, async (req, res) => {
     try {
         const chatId = parseInt(req.params.id, 10);
+        if (!Number.isInteger(chatId) || chatId <= 0) {
+            return res.status(400).json({ error: 'Некорректный ID чата' });
+        }
+
         const { userIds } = req.body;
 
         if (!Array.isArray(userIds)) {
@@ -405,6 +424,8 @@ router.post('/:id/members/bulk', authMiddleware, async (req, res) => {
             filtered: userIds.length - validMemberIds.length,
         });
     } catch (error) {
+        console.log('🔴 POST /api/chats/:id/members/bulk ERROR:', error.message);
+        console.log('STACK:', error.stack);
         logger.error('Ошибка массового добавления', error);
         res.status(500).json({ error: 'Ошибка сервера' });
     }
@@ -413,15 +434,26 @@ router.post('/:id/members/bulk', authMiddleware, async (req, res) => {
 // =====================================================
 // ✏️ PUT /api/chats/:id — редактирование канала
 // =====================================================
-// 🎯 ДИАГНОСТИКА: при ошибке пишем stack в console.error
-// =====================================================
+// 🎯 ДИАГНОСТИКА: console.log в stdout (Onreza показывает)
 router.put('/:id', authMiddleware, async (req, res) => {
     try {
+        // 🎯 Валидация chatId
         const chatId = parseInt(req.params.id, 10);
+        if (!Number.isInteger(chatId) || chatId <= 0) {
+            console.log('⚠️ PUT /api/chats: некорректный chatId:', req.params.id);
+            return res.status(400).json({ error: 'Некорректный ID чата' });
+        }
+
+        console.log('🔵 PUT /api/chats/' + chatId);
+        console.log('  userId:', req.user?.id);
+        console.log('  body:', JSON.stringify(req.body));
+
         const { name, description, emoji, isPrivate } = req.body;
 
         // 1. Проверка прав
         const canManage = await canManageChannel(chatId, req.user.id);
+        console.log('  canManage:', canManage);
+
         if (!canManage) {
             return res.status(403).json({
                 error: 'Только создатель, админ или командир может редактировать канал',
@@ -479,6 +511,9 @@ router.put('/:id', authMiddleware, async (req, res) => {
         updates.push(`updated_at = NOW()`);
         values.push(chatId);
 
+        console.log('  SQL:', `UPDATE chats SET ${updates.join(', ')} WHERE id = $${idx}`);
+        console.log('  values:', JSON.stringify(values));
+
         await pool.query(`
             UPDATE chats SET ${updates.join(', ')}
             WHERE id = $${idx}
@@ -493,16 +528,15 @@ router.put('/:id', authMiddleware, async (req, res) => {
 
         res.json({ message: 'Канал обновлён' });
     } catch (error) {
-        // 🎯 ДИАГНОСТИКА: пишем в stderr — Onreza может показать
-        console.error('❌❌❌ PUT /api/chats — ОШИБКА ❌❌❌');
-        console.error('chatId:', req.params.id);
-        console.error('userId:', req.user?.id);
-        console.error('body:', JSON.stringify(req.body));
-        console.error('MESSAGE:', error.message);
-        console.error('CODE:', error.code);
-        console.error('DETAIL:', error.detail);
-        console.error('STACK:', error.stack);
-        console.error('❌❌❌ КОНЕЦ ❌❌❌');
+        // 🎯 ДИАГНОСТИКА в stdout — Onreza покажет в runtime-логах
+        console.log('🔴 PUT /api/chats ERROR');
+        console.log('  chatId:', req.params.id);
+        console.log('  userId:', req.user?.id);
+        console.log('  body:', JSON.stringify(req.body));
+        console.log('  message:', error.message);
+        console.log('  code:', error.code);
+        console.log('  detail:', error.detail);
+        console.log('  stack:', error.stack);
 
         logger.error('Ошибка редактирования канала', error);
         res.status(500).json({ error: 'Ошибка сервера' });
@@ -512,13 +546,21 @@ router.put('/:id', authMiddleware, async (req, res) => {
 // =====================================================
 // 🗑️ DELETE /api/chats/:id — удаление канала (soft)
 // =====================================================
-// 🎯 ДИАГНОСТИКА: при ошибке пишем stack в console.error
-// =====================================================
+// 🎯 ДИАГНОСТИКА: console.log в stdout
 router.delete('/:id', authMiddleware, async (req, res) => {
     try {
         const chatId = parseInt(req.params.id, 10);
+        if (!Number.isInteger(chatId) || chatId <= 0) {
+            console.log('⚠️ DELETE /api/chats: некорректный chatId:', req.params.id);
+            return res.status(400).json({ error: 'Некорректный ID чата' });
+        }
+
+        console.log('🔵 DELETE /api/chats/' + chatId);
+        console.log('  userId:', req.user?.id);
 
         const canManage = await canManageChannel(chatId, req.user.id);
+        console.log('  canManage:', canManage);
+
         if (!canManage) {
             return res.status(403).json({
                 error: 'Только создатель, админ или командир может удалить канал',
@@ -548,15 +590,14 @@ router.delete('/:id', authMiddleware, async (req, res) => {
 
         res.json({ message: 'Канал удалён' });
     } catch (error) {
-        // 🎯 ДИАГНОСТИКА
-        console.error('❌❌❌ DELETE /api/chats — ОШИБКА ❌❌❌');
-        console.error('chatId:', req.params.id);
-        console.error('userId:', req.user?.id);
-        console.error('MESSAGE:', error.message);
-        console.error('CODE:', error.code);
-        console.error('DETAIL:', error.detail);
-        console.error('STACK:', error.stack);
-        console.error('❌❌❌ КОНЕЦ ❌❌❌');
+        // 🎯 ДИАГНОСТИКА в stdout
+        console.log('🔴 DELETE /api/chats ERROR');
+        console.log('  chatId:', req.params.id);
+        console.log('  userId:', req.user?.id);
+        console.log('  message:', error.message);
+        console.log('  code:', error.code);
+        console.log('  detail:', error.detail);
+        console.log('  stack:', error.stack);
 
         logger.error('Ошибка удаления канала', error);
         res.status(500).json({ error: 'Ошибка сервера' });
@@ -569,6 +610,9 @@ router.delete('/:id', authMiddleware, async (req, res) => {
 router.get('/:id', authMiddleware, async (req, res) => {
     try {
         const chatId = parseInt(req.params.id, 10);
+        if (!Number.isInteger(chatId) || chatId <= 0) {
+            return res.status(400).json({ error: 'Некорректный ID чата' });
+        }
 
         const access = await checkChatAccess(chatId, req.user.id);
         if (!access.allowed) {
@@ -587,6 +631,8 @@ router.get('/:id', authMiddleware, async (req, res) => {
             members,
         });
     } catch (error) {
+        console.log('🔴 GET /api/chats/:id ERROR:', error.message);
+        console.log('STACK:', error.stack);
         logger.error('Ошибка /chats/:id', error);
         res.status(500).json({ error: 'Ошибка сервера' });
     }
@@ -598,6 +644,10 @@ router.get('/:id', authMiddleware, async (req, res) => {
 router.post('/:id/members', authMiddleware, async (req, res) => {
     try {
         const chatId = parseInt(req.params.id, 10);
+        if (!Number.isInteger(chatId) || chatId <= 0) {
+            return res.status(400).json({ error: 'Некорректный ID чата' });
+        }
+
         const { userId } = req.body;
 
         if (!userId) {
@@ -637,6 +687,8 @@ router.post('/:id/members', authMiddleware, async (req, res) => {
 
         res.json({ message: 'Участник добавлен' });
     } catch (error) {
+        console.log('🔴 POST /api/chats/:id/members ERROR:', error.message);
+        console.log('STACK:', error.stack);
         logger.error('Ошибка добавления участника', error);
         res.status(500).json({ error: 'Ошибка сервера' });
     }
@@ -648,7 +700,14 @@ router.post('/:id/members', authMiddleware, async (req, res) => {
 router.delete('/:id/members/:userId', authMiddleware, async (req, res) => {
     try {
         const chatId = parseInt(req.params.id, 10);
+        if (!Number.isInteger(chatId) || chatId <= 0) {
+            return res.status(400).json({ error: 'Некорректный ID чата' });
+        }
+
         const userId = parseInt(req.params.userId, 10);
+        if (!Number.isInteger(userId) || userId <= 0) {
+            return res.status(400).json({ error: 'Некорректный ID пользователя' });
+        }
 
         const canManage = await canManageChannelMembers(chatId, req.user.id);
         if (!canManage) {
@@ -676,6 +735,8 @@ router.delete('/:id/members/:userId', authMiddleware, async (req, res) => {
 
         res.json({ message: 'Участник убран' });
     } catch (error) {
+        console.log('🔴 DELETE /api/chats/:id/members/:userId ERROR:', error.message);
+        console.log('STACK:', error.stack);
         logger.error('Ошибка удаления участника', error);
         res.status(500).json({ error: 'Ошибка сервера' });
     }
