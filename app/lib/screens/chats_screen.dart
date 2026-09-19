@@ -6,6 +6,7 @@
 //   • Тап на публичный канал без участия → «Вступить?»
 //   • Иконка канала через displayEmoji
 //   • Бейдж «Вступить» для публичных без участия
+// 🎯 ЗАГОЛОВОК: ⚔️ Bob Marley Squad ✌️
 // =====================================================
 
 import 'package:flutter/material.dart';
@@ -60,7 +61,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
     Future<void> _openChat(Chat chat) async {
         AppLogger.info('📂 Открытие: ${chat.title}');
 
-        // 🎯 ШАГ 14: если это канал, где я НЕ участник — предложить вступить
         if (chat.isChannel && !chat.isMember) {
             if (chat.isPrivate) {
                 _showInfo('Это приватный канал — нужно приглашение');
@@ -69,7 +69,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
 
             final shouldJoin = await _confirmJoin(chat);
             if (shouldJoin != true) return;
-            if (!mounted) return;   // 🎯 защита от async gap
+            if (!mounted) return;
 
             final chatProvider =
                 Provider.of<ChatProvider>(context, listen: false);
@@ -86,7 +86,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
             _showInfo('Вы вступили в канал');
         }
 
-        if (!mounted) return;   // 🎯 защита от async gap
+        if (!mounted) return;
 
         final chatProvider = Provider.of<ChatProvider>(context, listen: false);
         await chatProvider.openChat(chat.id);
@@ -253,15 +253,23 @@ class _ChatsScreenState extends State<ChatsScreen> {
             appBar: AppBar(
                 title: const Row(
                     children: [
-                        Text('🎯', style: TextStyle(fontSize: 28)),
-                        SizedBox(width: 10),
-                        Text(
-                            'Чаты',
-                            style: TextStyle(
-                                fontSize: 22,
-                                fontWeight: FontWeight.w700,
+                        // 🎯 ЗАГОЛОВОК: ⚔️ слева
+                        Text('⚔️', style: TextStyle(fontSize: 26)),
+                        SizedBox(width: 8),
+                        // 🎯 ЗАГОЛОВОК: Bob Marley Squad
+                        Expanded(
+                            child: Text(
+                                'Bob Marley Squad',
+                                style: TextStyle(
+                                    fontSize: 19,
+                                    fontWeight: FontWeight.w700,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                             ),
                         ),
+                        // 🎯 ЗАГОЛОВОК: ✌️ справа
+                        Text('✌️', style: TextStyle(fontSize: 24)),
                     ],
                 ),
                 actions: [
@@ -440,7 +448,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
         final hasUnread = provider.getUnreadCount(chat) > 0;
         final unreadCount = provider.getUnreadCount(chat);
 
-        // 🎯 ШАГ 14: не в канале?
         final isNotMember = chat.isChannel && !chat.isMember;
 
         return InkWell(
@@ -452,9 +459,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
                 ),
                 child: Row(
                     children: [
-                        // ─────────────────────────────
-                        // АВАТАРКА 68×68
-                        // ─────────────────────────────
                         Stack(
                             children: [
                                 Container(
@@ -496,7 +500,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
                                             ),
                                         ),
                                     ),
-                                // 🎯 ШАГ 14: замок для не-участников приватных
                                 if (isNotMember && chat.isPrivate)
                                     Positioned(
                                         right: 2,
@@ -525,9 +528,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
 
                         const SizedBox(width: 14),
 
-                        // ─────────────────────────────
-                        // ТЕКСТ
-                        // ─────────────────────────────
                         Expanded(
                             child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -612,9 +612,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
                             ),
                         ),
 
-                        // ─────────────────────────────
-                        // БЕЙДЖИ
-                        // ─────────────────────────────
                         if (hasUnread) ...[
                             const SizedBox(width: 8),
                             Container(
@@ -649,7 +646,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
                                 ),
                             ),
                         ] else if (isNotMember) ...[
-                            // 🎯 ШАГ 14: значок «можно вступить»
                             const SizedBox(width: 8),
                             Container(
                                 padding: const EdgeInsets.symmetric(
@@ -688,24 +684,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
     // 🎨 ИКОНКА ЧАТА
     // ============================================
     Widget _buildChatIcon(Chat chat) {
-        if (chat.useLogoImage) {
-            return ClipOval(
-                child: Image.asset(
-                    'assets/images/logo.png',
-                    width: 68,
-                    height: 68,
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) {
-                        return Text(
-                            chat.icon,
-                            style: const TextStyle(fontSize: 34),
-                        );
-                    },
-                ),
-            );
-        }
-
-        // 🎯 ШАГ 14: для каналов — displayEmoji (учитывает emoji или дефолт)
         final icon = chat.isChannel ? chat.displayEmoji : chat.icon;
 
         return Text(

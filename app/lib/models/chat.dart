@@ -5,6 +5,9 @@
 // 🎯 isPrivate: приватный ли канал
 // 🎯 isMember: я участник чата?
 // 🎯 emoji: эмодзи-аватар (для каналов)
+//
+// 🔧 v2: _intToBool теперь парсит строки ('true', '1', 't')
+// 🎯 DEBUG: временные print в fromJson (убрать после диагностики)
 // =====================================================
 
 class Chat {
@@ -84,6 +87,20 @@ class Chat {
     // =====================================================
 
     factory Chat.fromJson(Map<String, dynamic> json) {
+        // 🎯 DEBUG: для каналов — посмотреть реальные типы полей
+        // (убрать после диагностики)
+        if (json['type'] == 'channel') {
+            // ignore: avoid_print
+            print('🔍 Chat.fromJson CHANNEL: '
+                'id=${json['id']}, '
+                'is_member=${json['is_member']} '
+                '(${json['is_member'].runtimeType}), '
+                'is_private=${json['is_private']} '
+                '(${json['is_private'].runtimeType}), '
+                'emoji=${json['emoji']} '
+                '(${json['emoji'].runtimeType})');
+        }
+
         return Chat(
             id: json['id'] as int? ?? 0,
             type: json['type'] as String? ?? 'group',
@@ -214,8 +231,8 @@ class Chat {
     // =====================================================
 
     /// 🎯 Показывать ли эмодзи-аватар?
-    /// Для каналов с emoji — да. Для остальных — нет.
-    bool get hasEmojiAvatar => isChannel && emoji != null && emoji!.isNotEmpty;
+    bool get hasEmojiAvatar =>
+        isChannel && emoji != null && emoji!.isNotEmpty;
 
     /// 🎯 Эмодзи-аватар или дефолт
     String get displayEmoji {
@@ -227,39 +244,29 @@ class Chat {
     }
 
     /// 🎯 Может ли текущий пользователь писать в этот чат?
-    /// 
-    /// Зависит от:
-    ///   • типа чата
-    ///   • прав пользователя (can_write_general)
-    ///   • участия в канале (isMember)
-    /// 
-    /// ⚠️ Это лишь UI-подсказка. Финальное решение — на бэке
-    /// через `checkWriteAccess`. Здесь — для отрисовки кнопки.
     bool canWriteChannel({
         required bool canWriteGeneral,
         required bool isAdmin,
     }) {
         if (!isChannel) return false;
         if (isAdmin) return true;
-        if (!canWriteGeneral) return false; // Новобранец — не пишет
-        return isMember; // Боец+ пишет, только если в канале
+        if (!canWriteGeneral) return false;
+        return isMember;
     }
 
     /// 🎯 Может ли текущий пользователь вступить в канал?
-    /// 
-    /// Публичный канал + я Боец+ + я не участник.
     bool canJoinChannel({
         required bool canWriteGeneral,
         required bool isAdmin,
     }) {
         if (!isChannel) return false;
-        if (isMember) return false; // уже участник
-        if (isPrivate) return false; // в приватный не вступить
+        if (isMember) return false;
+        if (isPrivate) return false;
         return canWriteGeneral || isAdmin;
     }
 
     // =====================================================
-    // 🎨 ИКОНКА ЧАТА (для не-каналов)
+    // 🎨 ИКОНКА ЧАТА
     // =====================================================
 
     /// Отображаемое имя чата
@@ -337,17 +344,23 @@ class Chat {
         if (parts.length == 1) {
             return parts[0].substring(0, 1).toUpperCase();
         }
-        return (parts[0].substring(0, 1) + parts[1].substring(0, 1)).toUpperCase();
+        return (parts[0].substring(0, 1) + parts[1].substring(0, 1))
+            .toUpperCase();
     }
 
     // =====================================================
     // 🛠️ СТАТИЧЕСКИЕ МЕТОДЫ
     // =====================================================
 
+    /// 🎯 Парсинг bool: поддерживает bool, int (0/1), String ('true'/'1'/'t').
     static bool _intToBool(dynamic value) {
         if (value == null) return false;
         if (value is bool) return value;
         if (value is int) return value == 1;
+        if (value is String) {
+            final s = value.toLowerCase().trim();
+            return s == 'true' || s == '1' || s == 't';
+        }
         return false;
     }
 
@@ -359,7 +372,6 @@ class Chat {
     }
 
     /// 🎯 Парсинг эмодзи: если null, пусто или '??' — возвращаем null.
-    /// Фронт подставит дефолт через `displayEmoji`.
     static String? _parseEmoji(dynamic value) {
         if (value == null) return null;
         final str = value.toString().trim();
@@ -398,7 +410,7 @@ class Chat {
 }
 
 // =====================================================
-// 👥 МОДЕЛЬ УЧАСТНИКА ЧАТА (без изменений)
+// 👥 МОДЕЛЬ УЧАСТНИКА ЧАТА
 // =====================================================
 
 class ChatMember {
@@ -438,8 +450,11 @@ class ChatMember {
     String get initials {
         final parts = displayName.trim().split(' ');
         if (parts.isEmpty || parts.first.isEmpty) return '?';
-        if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
-        return (parts[0].substring(0, 1) + parts[1].substring(0, 1)).toUpperCase();
+        if (parts.length == 1) {
+            return parts.first.substring(0, 1).toUpperCase();
+        }
+        return (parts[0].substring(0, 1) + parts[1].substring(0, 1))
+            .toUpperCase();
     }
 
     static DateTime? _parseDate(dynamic value) {
@@ -450,5 +465,6 @@ class ChatMember {
     }
 
     @override
-    String toString() => 'ChatMember(id: $id, name: $displayName, role: $role)';
+    String toString() =>
+        'ChatMember(id: $id, name: $displayName, role: $role)';
 }
