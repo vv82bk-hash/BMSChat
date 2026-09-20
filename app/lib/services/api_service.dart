@@ -2,6 +2,8 @@
 // 🌐 BMSChat — СЕРВИС API
 // =====================================================
 // 🎯 ШАГ 8: методы для управления каналами
+// 🎯 FIX (web upload): MultipartFile.fromBytes вместо fromPath,
+//     потому что on web dart:io недоступен.
 // =====================================================
 
 import 'dart:async';
@@ -9,6 +11,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
 
 import '../config/constants.dart';
 import '../models/user.dart';
@@ -426,7 +429,6 @@ class ApiService {
         return ApiResponse.error(response.error!, statusCode: response.statusCode);
     }
 
-    // 🎯 ШАГ 8: обновлён createChat
     static Future<ApiResponse<Map<String, dynamic>>> createChat({
         required String type,
         required String name,
@@ -453,19 +455,6 @@ class ApiService {
         return ApiResponse.error(response.error!, statusCode: response.statusCode);
     }
 
-    // =====================================================
-    // 🎯 ШАГ 8: УПРАВЛЕНИЕ КАНАЛАМИ
-    // =====================================================
-
-    /// 🎯 Редактирование канала
-    /// 
-    /// Body:
-    ///   • name: string | null
-    ///   • description: string | null
-    ///   • emoji: string | null
-    ///   • isPrivate: bool | null
-    /// 
-    /// Права: Админ + Командир системы + Создатель
     static Future<ApiResponse<void>> updateChat(
         int chatId, {
         String? name,
@@ -489,9 +478,6 @@ class ApiService {
         return ApiResponse.error(response.error!, statusCode: response.statusCode);
     }
 
-    /// 🎯 Удаление канала (soft delete — is_active = false)
-    /// 
-    /// Права: Админ + Командир системы + Создатель
     static Future<ApiResponse<void>> deleteChat(int chatId) async {
         final response = await _delete(ApiEndpoints.chat(chatId));
 
@@ -501,12 +487,6 @@ class ApiService {
         return ApiResponse.error(response.error!, statusCode: response.statusCode);
     }
 
-    /// 🎯 Вступить в публичный канал
-    /// 
-    /// Условия:
-    ///   • Публичный канал (is_private = false)
-    ///   • Я Боец+ (can_write_general)
-    ///   • Я ещё не участник
     static Future<ApiResponse<void>> joinChannel(int chatId) async {
         final response = await _post('${ApiEndpoints.chat(chatId)}/join');
 
@@ -516,11 +496,6 @@ class ApiService {
         return ApiResponse.error(response.error!, statusCode: response.statusCode);
     }
 
-    /// 🎯 Массовое добавление участников в канал
-    /// 
-    /// Возвращает:
-    ///   • added: int — сколько реально добавлено
-    ///   • filtered: int — сколько отфильтровано
     static Future<ApiResponse<Map<String, dynamic>>> addChatMembersBulk(
         int chatId,
         List<int> userIds,
@@ -536,11 +511,6 @@ class ApiService {
         return ApiResponse.error(response.error!, statusCode: response.statusCode);
     }
 
-    /// 🎯 Удалить участника из канала
-    /// 
-    /// Права:
-    ///   • Приватный канал: только создатель
-    ///   • Публичный канал: создатель + Админ/Командир системы
     static Future<ApiResponse<void>> removeChatMember(
         int chatId,
         int userId,
@@ -673,9 +643,13 @@ class ApiService {
     // =====================================================
     // 📤 ЗАГРУЗКА ФАЙЛОВ
     // =====================================================
+    // 🎯 FIX (web): принимает XFile и читает байты через
+    // readAsBytes(), потому что MultipartFile.fromPath
+    // работает только на мобильных (dart:io).
+    // =====================================================
 
     static Future<ApiResponse<Map<String, dynamic>>> uploadFile(
-        String filePath,
+        XFile file,
         String type,
     ) async {
         try {
@@ -689,8 +663,15 @@ class ApiService {
                 request.headers['Authorization'] = 'Bearer $token';
             }
 
+            // 🎯 Читаем байты — работает и на web, и на мобильных
+            final bytes = await file.readAsBytes();
+
             request.files.add(
-                await http.MultipartFile.fromPath('file', filePath),
+                http.MultipartFile.fromBytes(
+                    'file',
+                    bytes,
+                    filename: file.name,
+                ),
             );
 
             request.fields['type'] = type;

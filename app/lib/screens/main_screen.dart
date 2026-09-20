@@ -3,12 +3,13 @@
 // =====================================================
 // 🎯 ЭТАП A: навигация как в Telegram
 //   • Вкладка «Чаты» — список чатов
-//   • Вкладка «Команда» — пользователи
+//   • Вкладка «Команда» — пользователи + счётчик (N)
 //   • Вкладка «Профиль» — личный профиль
 //   • Вкладка «Заявки» — только для админов (бейдж)
 // 🎯 Бейджи:
 //   • Чаты — totalUnreadCount из ChatProvider
 //   • Заявки — pendingUsers.length из UsersProvider
+// 🎯 СЧЁТЧИК КОМАНДЫ: серый текст (N) рядом с иконкой
 // =====================================================
 
 import 'package:flutter/material.dart';
@@ -33,12 +34,6 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
     int _currentIndex = 0;
 
-    // =====================================================
-    // 📑 СПИСОК ВКЛАДОК
-    // =====================================================
-    // Заявки добавляются только если пользователь — админ/командир.
-    // Список строится в build(), чтобы реагировать на изменение роли.
-
     static const List<Widget> _pages = [
         ChatsScreen(),
         UsersScreen(),
@@ -55,6 +50,8 @@ class _MainScreenState extends State<MainScreen> {
         final isCommander = auth.user?.isCommander ?? false;
         final canSeePending = isAdmin || isCommander;
 
+        final teamCount = users.allUsers.length;
+
         // 🎯 Собираем вкладки динамически — «Заявки» только для админов
         final items = <BottomNavigationBarItem>[
             BottomNavigationBarItem(
@@ -68,9 +65,18 @@ class _MainScreenState extends State<MainScreen> {
                 ),
                 label: 'Чаты',
             ),
-            const BottomNavigationBarItem(
-                icon: Icon(Icons.people_outline),
-                activeIcon: Icon(Icons.people),
+            // 🎯 Команда — со счётчиком (N)
+            BottomNavigationBarItem(
+                icon: _buildTeamIcon(
+                    icon: Icons.people_outline,
+                    count: teamCount,
+                    selected: false,
+                ),
+                activeIcon: _buildTeamIcon(
+                    icon: Icons.people,
+                    count: teamCount,
+                    selected: true,
+                ),
                 label: 'Команда',
             ),
             const BottomNavigationBarItem(
@@ -92,14 +98,11 @@ class _MainScreenState extends State<MainScreen> {
                 ),
         ];
 
-        // 🎯 Страницы — синхронно с items
         final pages = <Widget>[
             ..._pages,
             if (canSeePending) const PendingUsersScreen(),
         ];
 
-        // 🎯 Защита: если _currentIndex выходит за пределы (например,
-        // админ вышел, и вкладка «Заявки» исчезла) — сбрасываем на 0.
         final safeIndex = _currentIndex < pages.length ? _currentIndex : 0;
 
         return Scaffold(
@@ -139,9 +142,8 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     // =====================================================
-    // 🔴 БЕЙДЖ НА ИКОНКЕ
+    // 🔴 БЕЙДЖ НА ИКОНКЕ (красный кружок)
     // =====================================================
-
     Widget _buildBadgedIcon({
         required IconData icon,
         required int count,
@@ -181,6 +183,46 @@ class _MainScreenState extends State<MainScreen> {
                                 height: 1.2,
                             ),
                         ),
+                    ),
+                ),
+            ],
+        );
+    }
+
+    // =====================================================
+    // 👥 ИКОНКА «КОМАНДА» С (N)
+    // =====================================================
+    // 🎯 Рисует иконку + серый текст (N) рядом.
+    // Если count == 0 — просто иконка.
+    Widget _buildTeamIcon({
+        required IconData icon,
+        required int count,
+        required bool selected,
+    }) {
+        // 🎯 Если пользователей нет — просто иконка
+        if (count <= 0) {
+            return Icon(icon);
+        }
+
+        // 🎯 Если выделено (активная вкладка) — цвет rastaYellow;
+        // иначе — RastaTheme.textMuted.
+        final countColor = selected
+            ? RastaTheme.rastaYellow
+            : RastaTheme.textMuted;
+
+        return Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+                Icon(icon),
+                const SizedBox(width: 3),
+                Text(
+                    '($count)',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: countColor,
+                        height: 1.2,
                     ),
                 ),
             ],

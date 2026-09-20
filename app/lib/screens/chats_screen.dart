@@ -2,14 +2,15 @@
 // 💬 BMSChat — ЭКРАН СПИСКА ЧАТОВ
 // =====================================================
 // 🎯 ШАГ 14: управление каналами
-// 🎯 ЗАГОЛОВОК: ⚔️ Bob Marley Squad ✌️
+// 🎯 ЗАГОЛОВОК: [логотип] Bob Marley Squad
 // 🎯 ЭТАП A: экран стал вкладкой в MainScreen
 // 🎯 ЭТАП C.3: Telegram-стиль списка
 // 🎯 ЭТАП C.4: Search bar + секция «📌 Закреплённые»
 // 🎯 ЭТАП C.5: долгий тап → меню + свайп влево → удалить
-//   • Долгий тап → bottom sheet (Закрепить / Уведомления / Удалить)
-//   • Свайп влево → удалить (только админам)
-//   • Удаление — локальное (hideChatLocally)
+// 🎯 ЛОГОТИП В APPBAR: вместо ⚔️ — иконка приложения, ✌️ убран
+// 🎯 ЭМОДЗИ «Потарахтеть»:
+//   • _buildChatIcon использует displayEmoji для ВСЕХ чатов —
+//     если emoji задано (например, 🍁), оно и показывается.
 // =====================================================
 
 import 'package:flutter/material.dart';
@@ -260,7 +261,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
                             ),
                             const SizedBox(height: 12),
 
-                            // Заголовок — название чата
                             Padding(
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 20,
@@ -279,7 +279,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
                             ),
                             const SizedBox(height: 4),
 
-                            // 📌 Закрепить / Открепить
                             _menuTile(
                                 icon: isPinned
                                     ? Icons.push_pin_outlined
@@ -291,7 +290,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
                                     Navigator.pop(context, 'toggle_pin'),
                             ),
 
-                            // 🔕 Отключить уведомления
                             _menuTile(
                                 icon: Icons.notifications_off_outlined,
                                 title: 'Отключить уведомления',
@@ -299,7 +297,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
                                     Navigator.pop(context, 'mute'),
                             ),
 
-                            // 🗑 Удалить (только админам)
                             if (isAdmin)
                                 _menuTile(
                                     icon: Icons.delete_outline,
@@ -456,11 +453,46 @@ class _ChatsScreenState extends State<ChatsScreen> {
                 automaticallyImplyLeading: false,
                 title: _isSearching
                     ? _buildSearchField()
-                    : const Row(
+                    : Row(
                         children: [
-                            Text('⚔️', style: TextStyle(fontSize: 26)),
-                            SizedBox(width: 8),
-                            Expanded(
+                            // 🎯 Логотип приложения вместо ⚔️
+                            Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    boxShadow: [
+                                        BoxShadow(
+                                            color: RastaTheme.rastaYellow
+                                                .withValues(alpha: 0.35),
+                                            blurRadius: 6,
+                                            spreadRadius: 1,
+                                        ),
+                                    ],
+                                ),
+                                child: ClipOval(
+                                    child: Image.asset(
+                                        'assets/images/logo.png',
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (context, error,
+                                            stackTrace) {
+                                            return Container(
+                                                color: RastaTheme
+                                                    .surfaceSecondary,
+                                                child: const Center(
+                                                    child: Text(
+                                                        '🎯',
+                                                        style: TextStyle(
+                                                            fontSize: 18),
+                                                    ),
+                                                ),
+                                            );
+                                        },
+                                    ),
+                                ),
+                            ),
+                            const SizedBox(width: 10),
+                            const Expanded(
                                 child: Text(
                                     'Bob Marley Squad',
                                     style: TextStyle(
@@ -471,7 +503,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
                                     overflow: TextOverflow.ellipsis,
                                 ),
                             ),
-                            Text('✌️', style: TextStyle(fontSize: 24)),
+                            // 🎯 ✌️ убран
                         ],
                     ),
                 actions: [
@@ -728,10 +760,8 @@ class _ChatsScreenState extends State<ChatsScreen> {
         final auth = Provider.of<AuthProvider>(context, listen: false);
         final isAdmin = auth.user?.isAdmin ?? false;
 
-        // 🎯 ЭТАП C.5: tile в Dismissible (свайп влево)
         final tile = _buildChatTileContent(chat, provider);
 
-        // Только админам разрешён свайп-удалить
         if (!isAdmin) {
             return tile;
         }
@@ -794,7 +824,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
     }
 
     // =====================================================
-    // 🎴 КОНТЕНТ КАРТОЧКИ ЧАТА — вынесен из _buildChatTile
+    // 🎴 КОНТЕНТ КАРТОЧКИ ЧАТА
     // =====================================================
     Widget _buildChatTileContent(Chat chat, ChatProvider provider) {
         final onlineInfo = _getOnlineInfo(chat, provider);
@@ -816,9 +846,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
                         ),
                         child: Row(
                             children: [
-                                // ─────────────────────────────
-                                // АВАТАР 54×54 + рамка при непрочитанных
-                                // ─────────────────────────────
                                 Stack(
                                     children: [
                                         Container(
@@ -948,9 +975,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
 
                                 const SizedBox(width: 12),
 
-                                // ─────────────────────────────
-                                // ТЕКСТ
-                                // ─────────────────────────────
                                 Expanded(
                                     child: Column(
                                         crossAxisAlignment:
@@ -1053,9 +1077,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
                                     ),
                                 ),
 
-                                // ─────────────────────────────
-                                // БЕЙДЖИ / ЗВЁЗДЫ
-                                // ─────────────────────────────
                                 if (hasUnread) ...[
                                     const SizedBox(width: 8),
                                     Container(
@@ -1127,7 +1148,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
                         ),
                     ),
 
-                    // РАЗДЕЛИТЕЛЬ
                     Padding(
                         padding: const EdgeInsets.only(left: 80),
                         child: Container(
@@ -1143,11 +1163,13 @@ class _ChatsScreenState extends State<ChatsScreen> {
     // ============================================
     // 🎨 ИКОНКА ЧАТА
     // ============================================
+    // 🎯 Используем displayEmoji для ВСЕХ чатов:
+    //   • Если emoji задано (например, 🍁 для «Потарахтеть») — оно.
+    //   • Если канал без emoji — '📢'.
+    //   • Иначе — стандартная иконка типа.
     Widget _buildChatIcon(Chat chat) {
-        final icon = chat.isChannel ? chat.displayEmoji : chat.icon;
-
         return Text(
-            icon,
+            chat.displayEmoji,
             style: const TextStyle(fontSize: 26),
         );
     }

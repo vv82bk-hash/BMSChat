@@ -11,10 +11,9 @@
 // 🎯 ЭТАП B.4: разделители дат («Сегодня», «Вчера», ...)
 // 🎯 ЭТАП D.4: дебаунс _onScroll + троттлинг _triggerLoadMore
 // 🎯 ЭТАП E.1: эмодзи-пикер (emoji_picker_flutter)
-//   • 😀 открывает панель эмодзи вместо клавиатуры
-//   • выбор эмодзи → вставка в позицию курсора
-//   • тап в поле ввода → скрыть панель, показать клавиатуру
-//   • отправка → скрыть панель
+// 🎯 ЭМОДЗИ «Потарахтеть» в AppBar
+// 🎯 ПАНЕЛЬ 4 КНОПОК — только при фокусе
+// 🎯 FIX (web upload): sendFile принимает XFile, а не path
 // =====================================================
 
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
@@ -51,7 +50,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final _scrollController = ScrollController();
     final _imagePicker = ImagePicker();
 
-    // 🎯 ЭТАП E.1: FocusNode для управления клавиатурой
+    // 🎯 FocusNode — для управления клавиатурой
     final _inputFocusNode = FocusNode();
 
     bool _isTyping = false;
@@ -81,6 +80,9 @@ class _ChatScreenState extends State<ChatScreen> {
     // 🎯 ЭТАП E.1: показывать ли панель эмодзи
     bool _showEmojiPicker = false;
 
+    // 🎯 ПАНЕЛЬ 4 КНОПОК: видна только когда пользователь тапнул в поле
+    bool _isInputFocused = false;
+
     @override
     void initState() {
         super.initState();
@@ -106,6 +108,23 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     // ============================================
+    // 🎯 ПАНЕЛЬ 4 КНОПОК: показать/скрыть
+    // ============================================
+    void _showInputPanel() {
+        if (_isInputFocused) return;
+        setState(() => _isInputFocused = true);
+    }
+
+    void _hideInputPanel() {
+        if (!_isInputFocused && !_showEmojiPicker) return;
+        setState(() {
+            _isInputFocused = false;
+            _showEmojiPicker = false;
+        });
+        FocusScope.of(context).unfocus();
+    }
+
+    // ============================================
     // 📜 СКРОЛЛ
     // 🎯 ЭТАП D.4: оптимизирован
     // ============================================
@@ -115,16 +134,12 @@ class _ChatScreenState extends State<ChatScreen> {
         final position = _scrollController.position;
         final pixels = position.pixels;
 
-        // ─────────────────────────────────────────
-        // 1️⃣ Проверка «у низа» — для кнопки скролла + сброса счётчика
-        // ─────────────────────────────────────────
         final isNearBottom = pixels <= 200;
         final shouldResetUnread = pixels <= 50;
 
-        // setState вызываем ТОЛЬКО если реально меняется состояние
         final needSetState =
-            (_showScrollButton == isNearBottom) || // меняется видимость
-            (shouldResetUnread && _unreadBelowCount > 0); // сброс счётчика
+            (_showScrollButton == isNearBottom) ||
+            (shouldResetUnread && _unreadBelowCount > 0);
 
         if (needSetState) {
             setState(() {
@@ -133,10 +148,6 @@ class _ChatScreenState extends State<ChatScreen> {
             });
         }
 
-        // ─────────────────────────────────────────
-        // 2️⃣ Проверка «у верха» — для пагинации
-        // 🎯 ЭТАП D.4: троттлинг — не чаще 1 раза в 300 ms
-        // ─────────────────────────────────────────
         final isNearTop = pixels >= position.maxScrollExtent - 400;
         if (!isNearTop) {
             _lastLoadMoreAttempt = null;
@@ -268,18 +279,17 @@ class _ChatScreenState extends State<ChatScreen> {
         }
 
         _messageController.clear();
-        setState(() {
-            _isTyping = false;
-            // 🎯 ЭТАП E.1: скрываем панель эмодзи при отправке
-            _showEmojiPicker = false;
-        });
+        setState(() => _isTyping = false);
         _scrollToBottom();
     }
 
     // ============================================
     // 📎 ВЫБОР ФАЙЛА
+    // 🎯 FIX: передаём XFile (не .path) — работает на web
     // ============================================
     Future<void> _pickFile() async {
+        _showInputPanel();
+
         final source = await showModalBottomSheet<ImageSource>(
             context: context,
             backgroundColor: RastaTheme.surface,
@@ -382,7 +392,8 @@ class _ChatScreenState extends State<ChatScreen> {
             _showInfo('Загрузка...');
 
             final chat = Provider.of<ChatProvider>(context, listen: false);
-            final success = await chat.sendFile(image.path, 'image');
+            // 🎯 Передаём XFile напрямую — .path на web не работает
+            final success = await chat.sendFile(image, 'image');
 
             if (!mounted) return;
 
@@ -402,6 +413,7 @@ class _ChatScreenState extends State<ChatScreen> {
     // 🎤 ГОЛОСОВОЕ (заглушка)
     // ============================================
     void _pickVoice() {
+        _showInputPanel();
         _showInfo('🎤 Голосовые сообщения — скоро');
     }
 
@@ -409,11 +421,13 @@ class _ChatScreenState extends State<ChatScreen> {
     // 🎯 ЭТАП E.1: ЭМОДЗИ-ПИКЕР
     // ============================================
     void _pickEmoji() {
-        // Скрываем клавиатуру, показываем/скрываем панель эмодзи
         if (!_showEmojiPicker) {
             FocusScope.of(context).unfocus();
         }
-        setState(() => _showEmojiPicker = !_showEmojiPicker);
+        setState(() {
+            _showEmojiPicker = !_showEmojiPicker;
+            if (_showEmojiPicker) _isInputFocused = true;
+        });
     }
 
     /// 🎯 ЭТАП E.1: вставка эмодзи в позицию курсора
@@ -421,8 +435,6 @@ class _ChatScreenState extends State<ChatScreen> {
         final text = _messageController.text;
         final selection = _messageController.selection;
 
-        // Если курсор валиден — вставляем в его позицию,
-        // иначе — в конец
         final cursorPos = selection.isValid ? selection.start : text.length;
 
         final newText = text.substring(0, cursorPos) +
@@ -436,7 +448,6 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
         );
 
-        // Триггерим onChanged (отправку typing)
         _onTextChanged(newText);
     }
 
@@ -838,7 +849,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 shadowColor: Colors.black.withValues(alpha: 0.5),
                 title: Row(
                     children: [
-                        if (activeChat != null && activeChat.useLogoImage) ...[
+                        if (activeChat != null &&
+                            activeChat.useLogoImage) ...[
                             Container(
                                 width: 38,
                                 height: 38,
@@ -876,19 +888,33 @@ class _ChatScreenState extends State<ChatScreen> {
                         ],
 
                         if (activeChat != null &&
-                            activeChat.isChannel &&
                             !activeChat.useLogoImage) ...[
                             Container(
                                 width: 38,
                                 height: 38,
-                                decoration: const BoxDecoration(
+                                decoration: BoxDecoration(
                                     shape: BoxShape.circle,
-                                    gradient: LinearGradient(
-                                        colors: [
-                                            Color(0xFF9C27B0),
-                                            RastaTheme.rastaRed,
-                                        ],
-                                    ),
+                                    gradient: activeChat.isChannel
+                                        ? const LinearGradient(
+                                            colors: [
+                                                Color(0xFF9C27B0),
+                                                RastaTheme.rastaRed,
+                                            ],
+                                        )
+                                        : const LinearGradient(
+                                            colors: [
+                                                RastaTheme.rastaRed,
+                                                RastaTheme.rastaYellow,
+                                            ],
+                                        ),
+                                    boxShadow: [
+                                        BoxShadow(
+                                            color: RastaTheme.rastaYellow
+                                                .withValues(alpha: 0.35),
+                                            blurRadius: 8,
+                                            spreadRadius: 1,
+                                        ),
+                                    ],
                                 ),
                                 child: Center(
                                     child: Text(
@@ -933,150 +959,162 @@ class _ChatScreenState extends State<ChatScreen> {
             body: Column(
                 children: [
                     Expanded(
-                        child: Stack(
-                            children: [
-                                chat.isLoadingMessages
-                                    ? const Center(
-                                        child: CircularProgressIndicator(
-                                            valueColor:
-                                                AlwaysStoppedAnimation<Color>(
+                        child: GestureDetector(
+                            behavior: HitTestBehavior.translucent,
+                            onTap: _hideInputPanel,
+                            child: Stack(
+                                children: [
+                                    chat.isLoadingMessages
+                                        ? const Center(
+                                            child: CircularProgressIndicator(
+                                                valueColor:
+                                                    AlwaysStoppedAnimation<
+                                                        Color>(
                                                     RastaTheme.rastaYellow,
                                                 ),
-                                        ),
-                                    )
-                                    : chat.messages.isEmpty
-                                        ? _buildEmptyState(activeChat
-                                                ?.useLogoImage ??
-                                            false)
-                                        : ListView.builder(
-                                            controller: _scrollController,
-                                            reverse: true,
-                                            padding: const EdgeInsets.symmetric(
-                                                vertical: 8,
-                                                horizontal: 0,
                                             ),
-                                            itemCount: chat.messages.length,
-                                            itemBuilder: (context, index) {
-                                                final msgIndex = chat
-                                                        .messages.length -
-                                                    1 -
-                                                    index;
-                                                final message =
-                                                    chat.messages[msgIndex];
-                                                final isOwn = message
-                                                        .senderId ==
-                                                    currentUserId;
+                                        )
+                                        : chat.messages.isEmpty
+                                            ? _buildEmptyState(activeChat
+                                                    ?.useLogoImage ??
+                                                false)
+                                            : ListView.builder(
+                                                controller: _scrollController,
+                                                reverse: true,
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                    vertical: 8,
+                                                    horizontal: 0,
+                                                ),
+                                                itemCount:
+                                                    chat.messages.length,
+                                                itemBuilder: (context, index) {
+                                                    final msgIndex = chat
+                                                            .messages.length -
+                                                        1 -
+                                                        index;
+                                                    final message = chat
+                                                        .messages[msgIndex];
+                                                    final isOwn = message
+                                                            .senderId ==
+                                                        currentUserId;
 
-                                                final replyTo = message
-                                                            .replyToId !=
-                                                        null
-                                                    ? _messagesById[
-                                                        message.replyToId]
-                                                    : null;
-
-                                                final prevMessage =
-                                                    msgIndex > 0
-                                                        ? chat.messages[
-                                                            msgIndex - 1]
+                                                    final replyTo = message
+                                                                .replyToId !=
+                                                            null
+                                                        ? _messagesById[message
+                                                            .replyToId]
                                                         : null;
-                                                final showDate =
-                                                    prevMessage == null ||
-                                                        !_isSameDay(
-                                                            message.createdAt,
-                                                            prevMessage
-                                                                .createdAt,
-                                                        );
 
-                                                return Column(
-                                                    key: _getMessageKey(
-                                                        message.id),
-                                                    crossAxisAlignment:
-                                                        CrossAxisAlignment
-                                                            .stretch,
-                                                    children: [
-                                                        if (showDate)
-                                                            _buildDateDivider(
+                                                    final prevMessage =
+                                                        msgIndex > 0
+                                                            ? chat.messages[
+                                                                msgIndex - 1]
+                                                            : null;
+                                                    final showDate =
+                                                        prevMessage == null ||
+                                                            !_isSameDay(
                                                                 message
                                                                     .createdAt,
-                                                            ),
-                                                        AnimatedMessageWrapper(
-                                                            messageId:
-                                                                message.id,
-                                                            child: MessageBubble(
-                                                                message:
-                                                                    message,
-                                                                isOwn: isOwn,
-                                                                replyTo:
-                                                                    replyTo,
-                                                                onLongPress: () =>
-                                                                    _showReactionPicker(
-                                                                        context,
-                                                                        message,
-                                                                        isOwn,
-                                                                    ),
-                                                                onReply: () {
-                                                                    chat.setReplyTo(
-                                                                        message);
-                                                                },
-                                                                onReplyTap: replyTo !=
-                                                                        null
-                                                                    ? () => _scrollToMessage(
-                                                                        replyTo.id)
-                                                                    : null,
-                                                            ),
-                                                        ),
-                                                    ],
-                                                );
-                                            },
-                                        ),
+                                                                prevMessage
+                                                                    .createdAt,
+                                                            );
 
-                                if (chat.isLoadingMore)
-                                    const Positioned(
-                                        top: 0,
-                                        left: 0,
-                                        right: 0,
-                                        child: Padding(
-                                            padding: EdgeInsets.symmetric(
-                                                vertical: 8,
-                                            ),
-                                            child: Center(
-                                                child: SizedBox(
-                                                    width: 24,
-                                                    height: 24,
-                                                    child:
-                                                        CircularProgressIndicator(
-                                                        strokeWidth: 2,
-                                                        valueColor:
-                                                            AlwaysStoppedAnimation<
-                                                                Color>(
-                                                                RastaTheme
-                                                                    .rastaYellow,
+                                                    return Column(
+                                                        key: _getMessageKey(
+                                                            message.id),
+                                                        crossAxisAlignment:
+                                                            CrossAxisAlignment
+                                                                .stretch,
+                                                        children: [
+                                                            if (showDate)
+                                                                _buildDateDivider(
+                                                                    message
+                                                                        .createdAt,
+                                                                ),
+                                                            AnimatedMessageWrapper(
+                                                                messageId:
+                                                                    message
+                                                                        .id,
+                                                                child: MessageBubble(
+                                                                    message:
+                                                                        message,
+                                                                    isOwn:
+                                                                        isOwn,
+                                                                    replyTo:
+                                                                        replyTo,
+                                                                    onLongPress: () =>
+                                                                        _showReactionPicker(
+                                                                            context,
+                                                                            message,
+                                                                            isOwn,
+                                                                        ),
+                                                                    onReply: () {
+                                                                        chat.setReplyTo(
+                                                                            message);
+                                                                    },
+                                                                    onReplyTap: replyTo !=
+                                                                            null
+                                                                        ? () => _scrollToMessage(
+                                                                            replyTo.id)
+                                                                        : null,
+                                                                ),
                                                             ),
+                                                        ],
+                                                    );
+                                                },
+                                            ),
+
+                                    if (chat.isLoadingMore)
+                                        const Positioned(
+                                            top: 0,
+                                            left: 0,
+                                            right: 0,
+                                            child: Padding(
+                                                padding: EdgeInsets.symmetric(
+                                                    vertical: 8,
+                                                ),
+                                                child: Center(
+                                                    child: SizedBox(
+                                                        width: 24,
+                                                        height: 24,
+                                                        child:
+                                                            CircularProgressIndicator(
+                                                            strokeWidth: 2,
+                                                            valueColor:
+                                                                AlwaysStoppedAnimation<
+                                                                    Color>(
+                                                                    RastaTheme
+                                                                        .rastaYellow,
+                                                                ),
+                                                        ),
                                                     ),
                                                 ),
                                             ),
                                         ),
-                                    ),
 
-                                Positioned(
-                                    right: 16,
-                                    bottom: 16,
-                                    child: AnimatedScale(
-                                        scale: _showScrollButton ? 1.0 : 0.0,
-                                        duration: const Duration(
-                                            milliseconds: 200),
-                                        curve: Curves.easeOutBack,
-                                        child: AnimatedOpacity(
-                                            opacity:
+                                    Positioned(
+                                        right: 16,
+                                        bottom: 16,
+                                        child: AnimatedScale(
+                                            scale:
                                                 _showScrollButton ? 1.0 : 0.0,
                                             duration: const Duration(
                                                 milliseconds: 200),
-                                            child:
-                                                _buildScrollToBottomButton(),
+                                            curve: Curves.easeOutBack,
+                                            child: AnimatedOpacity(
+                                                opacity: _showScrollButton
+                                                    ? 1.0
+                                                    : 0.0,
+                                                duration: const Duration(
+                                                    milliseconds: 200),
+                                                child:
+                                                    _buildScrollToBottomButton(),
+                                            ),
                                         ),
                                     ),
-                                ),
-                            ],
+                                ],
+                            ),
                         ),
                     ),
 
@@ -1085,9 +1123,21 @@ class _ChatScreenState extends State<ChatScreen> {
                     else if (canWrite) ...[
                         if (chat.replyToMessage != null)
                             _buildReplyPreview(chat),
-                        _buildQuickActionsBar(),
+
+                        AnimatedContainer(
+                            duration: const Duration(milliseconds: 220),
+                            curve: Curves.easeOutCubic,
+                            height: _isInputFocused ? null : 0,
+                            child: ClipRect(
+                                child: Align(
+                                    alignment: Alignment.bottomCenter,
+                                    heightFactor: _isInputFocused ? 1.0 : 0.0,
+                                    child: _buildQuickActionsBar(),
+                                ),
+                            ),
+                        ),
+
                         _buildInputField(),
-                        // 🎯 ЭТАП E.1: панель эмодзи
                         if (_showEmojiPicker) _buildEmojiPicker(),
                     ] else
                         _buildBlockedField(permissionError),
@@ -1200,7 +1250,6 @@ class _ChatScreenState extends State<ChatScreen> {
                         onTap: _pickVoice,
                     ),
                     _quickAction(
-                        // 🎯 ЭТАП E.1: меняем иконку когда открыт пикер
                         icon: _showEmojiPicker
                             ? Icons.keyboard_alt_outlined
                             : Icons.emoji_emotions_outlined,
@@ -1618,16 +1667,14 @@ class _ChatScreenState extends State<ChatScreen> {
                     Expanded(
                         child: TextField(
                             controller: _messageController,
-                            // 🎯 ЭТАП E.1: используем FocusNode
                             focusNode: _inputFocusNode,
                             onChanged: _onTextChanged,
                             onSubmitted: (_) => _sendMessage(),
-                            // 🎯 ЭТАП E.1: при тапе скрываем пикер эмодзи
                             onTap: () {
                                 if (_showEmojiPicker) {
-                                    setState(
-                                        () => _showEmojiPicker = false);
+                                    setState(() => _showEmojiPicker = false);
                                 }
+                                _showInputPanel();
                             },
                             maxLines: 4,
                             minLines: 1,

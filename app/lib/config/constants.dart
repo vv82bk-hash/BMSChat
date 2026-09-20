@@ -4,8 +4,16 @@
 // Здесь задаются базовые URL для API и WebSocket,
 // таймауты, лимиты и другие константы.
 //
-// ВАЖНО: при смене сервера менять только _prodUrl
-// и _localUrlAndroid (для теста на реальном телефоне).
+// ⚠️ ВАЖНО: при смене сервера менять только:
+//   • _prodUrl
+//   • _localUrlAndroid (для теста на реальном телефоне)
+//
+// ⚠️ Backend (Node.js) — это ОТДЕЛЬНЫЙ сервер от Supabase.
+// Supabase — это только база данных. Flutter общается
+// с backend'ом, а backend — с Supabase.
+//
+// Схема:
+//   Flutter → Backend (Node.js) → Supabase (PostgreSQL)
 // =====================================================
 
 import 'dart:io' show Platform;
@@ -15,14 +23,21 @@ class Constants {
     // =====================================================
     // 🌍 БАЗОВЫЙ URL СЕРВЕРА
     // =====================================================
+    // ⚠️ Backend сейчас работает локально (localhost:5000).
+    // Когда развернёшь backend в облаке — обнови:
+    //   • _prodUrl — на публичный URL backend'а
+    //   • _localUrlAndroid — на IP компьютера в локальной сети
+    // =====================================================
 
-    /// Продакшн (ONREZA)
-    static const String _prodUrl = 'https://bmschat-vv82bk-nwjc.onreza.app';
+    /// Продакшн — пока локальный backend.
+    /// ⚠️ TODO: заменить на облачный URL, когда развернём backend.
+    static const String _prodUrl = 'http://localhost:5000';
 
     /// Debug-сборка на реальном Android-телефоне.
-    /// ВНИМАНИЕ: тоже продакшн, потому что 10.0.2.2
-    /// работает только на эмуляторе, а не на телефоне.
-    static const String _localUrlAndroid = 'https://bmschat-vv82bk-nwjc.onreza.app';
+    /// ⚠️ Для реального телефона localhost не подойдёт —
+    /// нужен IP компьютера в локальной сети (например, 192.168.1.100:5000).
+    /// Узнать IP: `ipconfig | findstr IPv4` в PowerShell.
+    static const String _localUrlAndroid = 'http://localhost:5000';
 
     /// Локальная разработка (iOS-симулятор / web)
     static const String _localUrlDefault = 'http://localhost:5000';

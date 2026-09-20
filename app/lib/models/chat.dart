@@ -4,13 +4,17 @@
 // 🎯 unreadCount: количество непрочитанных сообщений
 // 🎯 isPrivate: приватный ли канал
 // 🎯 isMember: я участник чата?
-// 🎯 emoji: эмодзи-аватар (для каналов)
+// 🎯 emoji: эмодзи-аватар (для каналов и чатов)
 //
 // 🔧 v2: _intToBool теперь парсит строки ('true', '1', 't')
 // 🎯 DEBUG: временные print в fromJson (убрать после диагностики)
 // 🎯 ЭТАП C.1: Telegram-формат даты и превью
 //   • lastMessageTime — 14:30 / вчера / Пн / 12 сентября / 12.09.24
 //   • lastMessagePreview — 🖼 Фото / 🎤 Голосовое / 📎 Файл
+// 🎯 ЭМОДЗИ «Потарахтеть»:
+//   • useLogoImage — теперь только для general-чатов БЕЗ emoji.
+//     Если у general-чата задан emoji (например, 🍁) —
+//     он показывается вместо логотипа.
 // =====================================================
 
 class Chat {
@@ -54,7 +58,8 @@ class Chat {
     /// но не может открыть/писать до «Вступить»)
     final bool isMember;
 
-    /// 🎯 Эмодзи-аватар (для каналов). Если null — используем дефолт '📢'
+    /// 🎯 Эмодзи-аватар (для каналов и кастомных чатов).
+    /// Если null — для каналов дефолт '📢', для general — логотип.
     final String? emoji;
 
     // =====================================================
@@ -234,9 +239,12 @@ class Chat {
 
     /// 🎯 Показывать ли эмодзи-аватар?
     bool get hasEmojiAvatar =>
-        isChannel && emoji != null && emoji!.isNotEmpty;
+        emoji != null && emoji!.isNotEmpty;
 
-    /// 🎯 Эмодзи-аватар или дефолт
+    /// 🎯 Эмодзи-аватар или дефолт:
+    ///   • Если emoji задано — оно.
+    ///   • Если канал без emoji — '📢'.
+    ///   • Иначе — стандартная иконка типа.
     String get displayEmoji {
         if (emoji != null && emoji!.isNotEmpty && emoji != '??') {
             return emoji!;
@@ -282,7 +290,7 @@ class Chat {
         return 'Чат #$id';
     }
 
-    /// Эмодзи-иконка (для не-каналов)
+    /// Эмодзи-иконка (для не-каналов, если emoji не задано)
     String get icon {
         switch (type) {
             case 'general':
@@ -298,19 +306,18 @@ class Chat {
         }
     }
 
-    bool get useLogoImage => type == 'general';
+    /// 🎯 ЭМОДЗИ «Потарахтеть»:
+    /// Логотип показываем только для general-чатов БЕЗ emoji.
+    /// Если у general-чата задан emoji (например, 🍁) —
+    /// вместо логотипа будет эмодзи.
+    bool get useLogoImage =>
+        type == 'general' && (emoji == null || emoji!.isEmpty);
 
     // =====================================================
     // 🎯 ЭТАП C.1: TELEGRAM-ФОРМАТ ПРЕВЬЮ
     // =====================================================
 
     /// 🎯 Превью последнего сообщения с префиксами типа.
-    ///
-    /// Формат как в Telegram:
-    ///   • `IMG:...` / `/api/files/...` → «🖼 Фото»
-    ///   • `VOICE:...` → «🎤 Голосовое сообщение»
-    ///   • `FILE:...` → «📎 Файл»
-    ///   • Обычный текст → текст (обрезанный до 50 символов)
     String get lastMessagePreview {
         if (lastMessageText == null || lastMessageText!.isEmpty) {
             return 'Нет сообщений';
@@ -439,7 +446,7 @@ class Chat {
     String toString() {
         return 'Chat(id: $id, type: $type, title: $title, '
             'members: $membersCount, unread: $unreadCount, '
-            'isPrivate: $isPrivate, isMember: $isMember)';
+            'isPrivate: $isPrivate, isMember: $isMember, emoji: $emoji)';
     }
 
     @override

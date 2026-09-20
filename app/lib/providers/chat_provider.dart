@@ -9,15 +9,13 @@
 //   • openChat — fallback: грузит с сервера, если нет в _chats
 // 🎯 ЭТАП A: добавлен totalUnreadCount для бейджа на BottomNav
 // 🎯 ЭТАП C.2: закреплённые чаты
-//   • _pinnedChatIds хранится в SharedPreferences
-//   • pinnedChats — закреплённые сверху
-//   • regularChats — все остальные
-//   • pinChat / unpinChat / isPinned
+// 🎯 FIX (web upload): sendFile принимает XFile вместо String
 // =====================================================
 
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/constants.dart';
@@ -121,18 +119,14 @@ class ChatProvider extends ChangeNotifier {
     // 🎯 ЭТАП C.2: ЗАКРЕПЛЁННЫЕ ЧАТЫ
     // =====================================================
 
-    /// Закреплён ли чат?
     bool isPinned(int chatId) => _pinnedChatIds.contains(chatId);
 
-    /// Закреплённые чаты (в порядке _chats, уже отсортированных).
     List<Chat> get pinnedChats =>
         _chats.where((c) => _pinnedChatIds.contains(c.id)).toList();
 
-    /// Обычные чаты (все, кроме закреплённых).
     List<Chat> get regularChats =>
         _chats.where((c) => !_pinnedChatIds.contains(c.id)).toList();
 
-    /// Количество закреплённых.
     int get pinnedCount => _pinnedChatIds.length;
 
     // =====================================================
@@ -143,8 +137,6 @@ class ChatProvider extends ChangeNotifier {
         _authProvider = auth;
     }
 
-    /// 🎯 ЭТАП C.2: загрузка закреплений из SharedPreferences.
-    /// Вызывается при старте приложения (например, из main()).
     Future<void> loadPinnedChats() async {
         if (_pinnedLoaded) return;
 
@@ -152,8 +144,7 @@ class ChatProvider extends ChangeNotifier {
             final prefs = await SharedPreferences.getInstance();
             final stored = prefs.getStringList(_pinnedKey);
             if (stored != null) {
-                _pinnedChatIds
-                    .clear();
+                _pinnedChatIds.clear();
                 _pinnedChatIds.addAll(
                     stored.map((s) => int.tryParse(s)).whereType<int>(),
                 );
@@ -166,7 +157,6 @@ class ChatProvider extends ChangeNotifier {
         }
     }
 
-    /// 🎯 ЭТАП C.2: сохранение закреплений в SharedPreferences.
     Future<void> _savePinnedChats() async {
         try {
             final prefs = await SharedPreferences.getInstance();
@@ -179,7 +169,6 @@ class ChatProvider extends ChangeNotifier {
         }
     }
 
-    /// 🎯 ЭТАП C.2: закрепить чат.
     Future<void> pinChat(int chatId) async {
         if (_pinnedChatIds.contains(chatId)) return;
 
@@ -191,7 +180,6 @@ class ChatProvider extends ChangeNotifier {
         AppLogger.info('📌 Чат #$chatId закреплён');
     }
 
-    /// 🎯 ЭТАП C.2: открепить чат.
     Future<void> unpinChat(int chatId) async {
         if (!_pinnedChatIds.contains(chatId)) return;
 
@@ -203,7 +191,6 @@ class ChatProvider extends ChangeNotifier {
         AppLogger.info('📌 Чат #$chatId откреплён');
     }
 
-    /// 🎯 ЭТАП C.2: переключить закрепление.
     Future<void> togglePin(int chatId) async {
         if (isPinned(chatId)) {
             await unpinChat(chatId);
@@ -212,9 +199,6 @@ class ChatProvider extends ChangeNotifier {
         }
     }
 
-    /// 🎯 ЭТАП C.5: локально скрыть чат из списка.
-    /// Сервер не трогаем — при следующем loadChats() чат вернётся.
-    /// Используется для «Удалить» из контекстного меню и свайпа.
     void hideChatLocally(int chatId) {
         _chats.removeWhere((c) => c.id == chatId);
 
@@ -225,20 +209,16 @@ class ChatProvider extends ChangeNotifier {
         notifyListeners();
         AppLogger.info('👁️ Чат #$chatId скрыт локально');
     }
-    /// 🎯 ЭТАП C.2: сортировка чатов с учётом закрепления.
-    ///   • Закреплённые — сверху (между собой по lastMessageAt).
-    ///   • Обычные — под ними (по lastMessageAt).
+
     void _sortChats() {
         _chats.sort((a, b) {
             final aPinned = _pinnedChatIds.contains(a.id);
             final bPinned = _pinnedChatIds.contains(b.id);
 
-            // Закреплённые всегда выше
             if (aPinned != bPinned) {
                 return aPinned ? -1 : 1;
             }
 
-            // Внутри группы — по lastMessageAt
             final aTime = a.lastMessageAt ?? a.createdAt ?? DateTime(2000);
             final bTime = b.lastMessageAt ?? b.createdAt ?? DateTime(2000);
             return bTime.compareTo(aTime);
@@ -312,7 +292,6 @@ class ChatProvider extends ChangeNotifier {
     Future<void> loadChats() async {
         AppLogger.info('📋 Загрузка чатов...');
 
-        // 🎯 ЭТАП C.2: при первой загрузке — подтягиваем закрепления
         if (!_pinnedLoaded) {
             await loadPinnedChats();
         }
@@ -327,7 +306,6 @@ class ChatProvider extends ChangeNotifier {
             if (response.isSuccess) {
                 _chats = response.data ?? [];
 
-                // 🎯 ФИКС: после перезагрузки — обновляем _activeChat
                 if (_activeChat != null) {
                     final updated = _chats.firstWhere(
                         (c) => c.id == _activeChat!.id,
@@ -336,7 +314,6 @@ class ChatProvider extends ChangeNotifier {
                     _activeChat = updated;
                 }
 
-                // 🎯 ЭТАП C.2: сортируем с учётом закреплений
                 _sortChats();
 
                 AppLogger.success(
@@ -359,13 +336,10 @@ class ChatProvider extends ChangeNotifier {
         notifyListeners();
     }
 
-    /// 🎯 ФИКС: защита от гонки — если чат не найден в `_chats`,
-    /// загружаем его с сервера через `GET /api/chats/:id`.
     Future<void> openChat(int chatId) async {
         AppLogger.info('🎯 Открытие чата $chatId');
 
         try {
-            // 1. Пытаемся найти в локальном списке
             Chat? chat;
             try {
                 chat = _chats.firstWhere((c) => c.id == chatId);
@@ -373,7 +347,6 @@ class ChatProvider extends ChangeNotifier {
                 chat = null;
             }
 
-            // 2. 🎯 Fallback: если нет — грузим с сервера
             if (chat == null) {
                 AppLogger.warn(
                     'Чат #$chatId не найден в _chats — загружаем с сервера'
@@ -407,7 +380,6 @@ class ChatProvider extends ChangeNotifier {
                 return;
             }
 
-            // 3. Устанавливаем активный чат
             _activeChat = chat;
             _messages = [];
             _typingUsers.clear();
@@ -418,7 +390,6 @@ class ChatProvider extends ChangeNotifier {
             _hasMoreOld = true;
             _isLoadingMore = false;
 
-            // 4. Обнуляем unreadCount
             final idx = _chats.indexWhere((c) => c.id == chatId);
             if (idx >= 0 && _chats[idx].unreadCount > 0) {
                 _chats[idx] = _chats[idx].copyWith(unreadCount: 0);
@@ -426,7 +397,6 @@ class ChatProvider extends ChangeNotifier {
 
             notifyListeners();
 
-            // 5. Грузим сообщения
             await _loadMessages(chatId);
         } catch (e) {
             AppLogger.error('Ошибка открытия чата', e);
@@ -451,8 +421,6 @@ class ChatProvider extends ChangeNotifier {
     // 🎯 ШАГ 9: УПРАВЛЕНИЕ КАНАЛАМИ
     // =====================================================
 
-    /// 🎯 ФИКС: формируем Chat напрямую из ответа сервера,
-    /// не полагаясь на loadChats() — избегаем гонки.
     Future<Chat?> createChannel({
         required String name,
         String? description,
@@ -495,7 +463,6 @@ class ChatProvider extends ChangeNotifier {
                 'unread_count': 0,
             });
 
-            // Добавляем в _chats и сортируем
             _chats.removeWhere((c) => c.id == created.id);
             _chats.insert(0, created);
             _sortChats();
@@ -519,7 +486,6 @@ class ChatProvider extends ChangeNotifier {
         }
     }
 
-    /// 🎯 Редактировать канал
     Future<bool> updateChannel(
         int chatId, {
         String? name,
@@ -576,7 +542,6 @@ class ChatProvider extends ChangeNotifier {
         }
     }
 
-    /// 🎯 Удалить канал
     Future<bool> deleteChannel(int chatId) async {
         AppLogger.info('🗑️ Удаление канала #$chatId');
 
@@ -592,7 +557,6 @@ class ChatProvider extends ChangeNotifier {
 
             _chats.removeWhere((c) => c.id == chatId);
 
-            // 🎯 ЭТАП C.2: убираем из закреплённых, если был закреплён
             if (_pinnedChatIds.contains(chatId)) {
                 _pinnedChatIds.remove(chatId);
                 await _savePinnedChats();
@@ -614,7 +578,6 @@ class ChatProvider extends ChangeNotifier {
         }
     }
 
-    /// 🎯 Вступить в публичный канал
     Future<bool> joinChannel(int chatId) async {
         AppLogger.info('🚪 Вступление в канал #$chatId');
 
@@ -655,7 +618,6 @@ class ChatProvider extends ChangeNotifier {
         }
     }
 
-    /// 🎯 Массовое добавление участников
     Future<Map<String, int>?> addChannelMembers(
         int chatId,
         List<int> userIds,
@@ -703,7 +665,6 @@ class ChatProvider extends ChangeNotifier {
         }
     }
 
-    /// 🎯 Удалить участника из канала
     Future<bool> removeChannelMember(int chatId, int userId) async {
         AppLogger.info('🗑️ Удаление участника #$userId из #$chatId');
 
@@ -897,7 +858,6 @@ class ChatProvider extends ChangeNotifier {
 
     int getUnreadCount(Chat chat) => chat.unreadCount;
 
-    /// 🎯 ЭТАП A: сумма непрочитанных по всем чатам — для бейджа
     int get totalUnreadCount {
         return _chats.fold<int>(0, (sum, chat) => sum + chat.unreadCount);
     }
@@ -977,7 +937,9 @@ class ChatProvider extends ChangeNotifier {
         }
     }
 
-    Future<bool> sendFile(String localPath, String type) async {
+    /// 🎯 FIX (web upload): принимает XFile вместо String.
+    /// XFile.readAsBytes() работает и на web, и на мобильных.
+    Future<bool> sendFile(XFile file, String type) async {
         if (_activeChat == null) {
             AppLogger.warn('Нет активного чата');
             return false;
@@ -995,7 +957,7 @@ class ChatProvider extends ChangeNotifier {
         try {
             AppLogger.info('📤 Загрузка файла: $type');
 
-            final uploadResponse = await ApiService.uploadFile(localPath, type);
+            final uploadResponse = await ApiService.uploadFile(file, type);
 
             if (!uploadResponse.isSuccess || uploadResponse.data == null) {
                 AppLogger.error('Ошибка загрузки: ${uploadResponse.error}');
@@ -1429,7 +1391,6 @@ class ChatProvider extends ChangeNotifier {
                 lastMessageAt: message.createdAt,
             );
 
-            // 🎯 ЭТАП C.2: используем _sortChats вместо своего sort
             _sortChats();
 
             notifyListeners();
@@ -1476,10 +1437,6 @@ class ChatProvider extends ChangeNotifier {
         _isSendingMessage = false;
         _hasMoreOld = true;
         _isLoadingMore = false;
-
-        // 🎯 ЭТАП C.2: НЕ очищаем _pinnedChatIds —
-        // закрепления пользовательские, живут между сессиями.
-        // Они загрузятся заново через loadPinnedChats().
 
         notifyListeners();
     }
