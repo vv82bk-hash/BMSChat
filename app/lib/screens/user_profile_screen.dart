@@ -5,8 +5,10 @@
 //   • «Подтвердить» — по роли Новобранец (не по is_approved)
 //   • «Назначить командиром» — исключая Новобранца и Админа
 //   • «Понизить до новобранца» — исключая Новобранца
+// 🎯 ЭТАП D.1: кэш аватара через CachedNetworkImageProvider
 // =====================================================
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -163,8 +165,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                             CircleAvatar(
                                 radius: 48,
                                 backgroundColor: RastaTheme.surfaceSecondary,
+                                // 🎯 ЭТАП D.1: кэш аватара на диск
                                 backgroundImage: user.avatar != null
-                                    ? NetworkImage(user.avatar!)
+                                    ? CachedNetworkImageProvider(user.avatar!)
                                     : null,
                                 child: user.avatar == null
                                     ? Text(
@@ -432,8 +435,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         }
 
         // 🎯 ПРАВКА 1: «Подтвердить» — по РОЛИ Новобранец, не по is_approved
-        // Показывается для любого Новобранца (в т.ч. если is_approved = false).
-        // Скрывается для не-Новобранцев.
         if (user.isRecruit && canApprove && !isMe) {
             buttons.add(_actionButton(
                 icon: Icons.check_circle_outline,
@@ -444,7 +445,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         }
 
         // 🎯 ПРАВКА 2: «Назначить командиром» — исключаем Новобранца и Админа
-        // (isApproved больше не проверяем напрямую — у Бойца/Командира он всегда true)
         if (canAssign &&
             !user.isCommander &&
             !user.isRecruit &&
@@ -471,7 +471,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         }
 
         // 🎯 ПРАВКА 3: «Понизить до новобранца» — исключаем Новобранца
-        // (нельзя понизить того, кто уже Новобранец)
         if (canApprove && !isMe && !user.isAdmin && !user.isRecruit) {
             buttons.add(_actionButton(
                 icon: Icons.arrow_downward,

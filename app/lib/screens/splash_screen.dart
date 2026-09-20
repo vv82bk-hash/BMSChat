@@ -1,6 +1,8 @@
 // =====================================================
 // 🎯 BMSChat — ЭКРАН ЗАСТАВКИ (SPLASH) — УКРАШЕННЫЙ
 // =====================================================
+// 🎯 ЭТАП A: навигация на MainScreen (BottomNav) вместо ChatsScreen
+// =====================================================
 
 import 'dart:math' as math;
 
@@ -12,7 +14,7 @@ import '../providers/chat_provider.dart';
 import '../themes/rasta_theme.dart';
 import '../utils/app_logger.dart';
 import 'login_screen.dart';
-import 'chats_screen.dart';
+import 'main_screen.dart';
 
 class SplashScreen extends StatefulWidget {
     const SplashScreen({super.key});
@@ -193,11 +195,11 @@ class _SplashScreenState extends State<SplashScreen>
         final auth = Provider.of<AuthProvider>(context, listen: false);
 
         final Widget targetScreen = auth.isAuthenticated
-            ? const ChatsScreen()
+            ? const MainScreen()
             : const LoginScreen();
 
         AppLogger.info(
-            'Навигация → ${auth.isAuthenticated ? "ChatsScreen" : "LoginScreen"}'
+            'Навигация → ${auth.isAuthenticated ? "MainScreen" : "LoginScreen"}'
         );
 
         Navigator.of(context).pushReplacement(

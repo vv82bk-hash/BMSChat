@@ -8,6 +8,9 @@
 //
 // 🔧 v2: _intToBool теперь парсит строки ('true', '1', 't')
 // 🎯 DEBUG: временные print в fromJson (убрать после диагностики)
+// 🎯 ЭТАП C.1: Telegram-формат даты и превью
+//   • lastMessageTime — 14:30 / вчера / Пн / 12 сентября / 12.09.24
+//   • lastMessagePreview — 🖼 Фото / 🎤 Голосовое / 📎 Файл
 // =====================================================
 
 class Chat {
@@ -88,7 +91,6 @@ class Chat {
 
     factory Chat.fromJson(Map<String, dynamic> json) {
         // 🎯 DEBUG: для каналов — посмотреть реальные типы полей
-        // (убрать после диагностики)
         if (json['type'] == 'channel') {
             // ignore: avoid_print
             print('🔍 Chat.fromJson CHANNEL: '
@@ -298,43 +300,92 @@ class Chat {
 
     bool get useLogoImage => type == 'general';
 
+    // =====================================================
+    // 🎯 ЭТАП C.1: TELEGRAM-ФОРМАТ ПРЕВЬЮ
+    // =====================================================
+
+    /// 🎯 Превью последнего сообщения с префиксами типа.
+    ///
+    /// Формат как в Telegram:
+    ///   • `IMG:...` / `/api/files/...` → «🖼 Фото»
+    ///   • `VOICE:...` → «🎤 Голосовое сообщение»
+    ///   • `FILE:...` → «📎 Файл»
+    ///   • Обычный текст → текст (обрезанный до 50 символов)
     String get lastMessagePreview {
         if (lastMessageText == null || lastMessageText!.isEmpty) {
             return 'Нет сообщений';
         }
+
         final text = lastMessageText!;
-        if (text.startsWith('/api/files/') || text.startsWith('IMG:')) {
-            return '📷 Фото';
+
+        if (text.startsWith('VOICE:')) {
+            return '🎤 Голосовое сообщение';
         }
+        if (text.startsWith('FILE:')) {
+            return '📎 Файл';
+        }
+        if (text.startsWith('IMG:') || text.startsWith('/api/files/')) {
+            return '🖼 Фото';
+        }
+
         if (text.length > 50) {
             return '${text.substring(0, 50)}...';
         }
         return text;
     }
 
+    // =====================================================
+    // 🎯 ЭТАП C.1: TELEGRAM-ФОРМАТ ДАТЫ
+    // =====================================================
+
+    /// 🎯 Время последнего сообщения в Telegram-формате:
+    ///   • Сегодня      → `14:30`
+    ///   • Вчера        → `вчера`
+    ///   • Эта неделя   → `Пн`, `Вт`, `Ср`...
+    ///   • Этот год     → `12.09`
+    ///   • Старше года  → `12.09.24`
     String get lastMessageTime {
         if (lastMessageAt == null) return '';
 
         final now = DateTime.now();
-        final diff = now.difference(lastMessageAt!);
+        final today = DateTime(now.year, now.month, now.day);
+        final yesterday = today.subtract(const Duration(days: 1));
+        final messageDay = DateTime(
+            lastMessageAt!.year,
+            lastMessageAt!.month,
+            lastMessageAt!.day,
+        );
 
-        if (diff.inHours < 24 && now.day == lastMessageAt!.day) {
+        // Сегодня → 14:30
+        if (messageDay == today) {
             final hour = lastMessageAt!.hour.toString().padLeft(2, '0');
             final minute = lastMessageAt!.minute.toString().padLeft(2, '0');
             return '$hour:$minute';
         }
 
-        if (diff.inDays < 2) {
+        // Вчера → вчера
+        if (messageDay == yesterday) {
             return 'вчера';
         }
 
-        if (diff.inDays < 7) {
-            return '${diff.inDays} дн';
+        // Эта неделя (2-6 дней назад) → Пн, Вт, ...
+        final diffDays = today.difference(messageDay).inDays;
+        if (diffDays >= 2 && diffDays < 7) {
+            const weekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+            return weekdays[lastMessageAt!.weekday - 1];
         }
 
+        // Этот год → 12.09
         final day = lastMessageAt!.day.toString().padLeft(2, '0');
         final month = lastMessageAt!.month.toString().padLeft(2, '0');
-        return '$day.$month';
+
+        if (lastMessageAt!.year == now.year) {
+            return '$day.$month';
+        }
+
+        // Старше года → 12.09.24
+        final year = (lastMessageAt!.year % 100).toString().padLeft(2, '0');
+        return '$day.$month.$year';
     }
 
     String get initials {

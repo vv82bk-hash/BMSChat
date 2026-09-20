@@ -1,8 +1,11 @@
 // =====================================================
-// 👥 BMSChat — ЭКРАН УЧАСТНИКОВ
+// 👥 BMSChat — ЭКРАН КОМАНДЫ
 // =====================================================
 // Показывает список всех пользователей команды.
-// Для командира/админа — ещё и вкладку «Заявки».
+// 🎯 ЭТАП A: экран стал вкладкой в MainScreen
+//   • Убрана кнопка «Назад» (automaticallyImplyLeading: false)
+//   • Заголовок «Участники» → «Команда»
+//   • Убрана кнопка «Заявки» — теперь это отдельная вкладка
 // =====================================================
 
 import 'package:flutter/material.dart';
@@ -12,7 +15,6 @@ import '../providers/auth_provider.dart';
 import '../providers/users_provider.dart';
 import '../themes/rasta_theme.dart';
 import '../widgets/user_list_tile.dart';
-import 'pending_users_screen.dart';
 import 'user_profile_screen.dart';
 
 class UsersScreen extends StatefulWidget {
@@ -31,11 +33,11 @@ class _UsersScreenState extends State<UsersScreen> {
         super.initState();
         WidgetsBinding.instance.addPostFrameCallback((_) {
             final users = Provider.of<UsersProvider>(context, listen: false);
-            // Инициализируем Socket-слушатели для заявок
+            // Инициализируем Socket-слушатели
             users.initSocketListeners();
             // Загружаем пользователей
             users.loadUsers();
-            // Загружаем заявки (если есть право)
+            // Загружаем заявки (для бейджа в MainScreen — счётчик)
             final auth = Provider.of<AuthProvider>(context, listen: false);
             if (auth.canApproveUsers) {
                 users.loadPendingUsers();
@@ -57,11 +59,10 @@ class _UsersScreenState extends State<UsersScreen> {
         return Scaffold(
             backgroundColor: RastaTheme.background,
             appBar: AppBar(
-                title: const Text('Участники'),
+                // 🎯 ЭТАП A: скрываем кнопку «Назад» — экран теперь вкладка
+                automaticallyImplyLeading: false,
+                title: const Text('Команда'),
                 actions: [
-                    // 👑 Кнопка «Заявки» (только для тех, кто может подтверждать)
-                    if (auth.canApproveUsers)
-                        _buildPendingButton(users),
                     IconButton(
                         icon: const Icon(Icons.refresh),
                         onPressed: () {
@@ -86,58 +87,6 @@ class _UsersScreenState extends State<UsersScreen> {
                     ),
                 ],
             ),
-        );
-    }
-
-    // =====================================================
-    // 👑 КНОПКА «ЗАЯВКИ» С БЕЙДЖЕМ
-    // =====================================================
-    Widget _buildPendingButton(UsersProvider users) {
-        final count = users.pendingCount;
-
-        return Stack(
-            children: [
-                IconButton(
-                    icon: const Icon(Icons.notifications_outlined),
-                    tooltip: 'Заявки',
-                    onPressed: () {
-                        Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                                builder: (_) => const PendingUsersScreen(),
-                            ),
-                        );
-                    },
-                ),
-                if (count > 0)
-                    Positioned(
-                        right: 6,
-                        top: 6,
-                        child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 5,
-                                vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                                color: RastaTheme.error,
-                                borderRadius: BorderRadius.circular(10),
-                            ),
-                            constraints: const BoxConstraints(
-                                minWidth: 18,
-                                minHeight: 18,
-                            ),
-                            child: Text(
-                                count > 99 ? '99+' : '$count',
-                                style: const TextStyle(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.white,
-                                ),
-                                textAlign: TextAlign.center,
-                            ),
-                        ),
-                    ),
-            ],
         );
     }
 

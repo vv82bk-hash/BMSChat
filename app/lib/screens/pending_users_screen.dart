@@ -3,6 +3,8 @@
 // =====================================================
 // Показывает неподтверждённых пользователей.
 // Командир/админ может подтвердить или отклонить.
+// 🎯 ЭТАП A: экран стал вкладкой в MainScreen
+//   • Убрана кнопка «Назад» (automaticallyImplyLeading: false)
 // =====================================================
 
 import 'package:flutter/material.dart';
@@ -38,6 +40,8 @@ class _PendingUsersScreenState extends State<PendingUsersScreen> {
         return Scaffold(
             backgroundColor: RastaTheme.background,
             appBar: AppBar(
+                // 🎯 ЭТАП A: скрываем кнопку «Назад» — экран теперь вкладка
+                automaticallyImplyLeading: false,
                 title: const Text('Заявки'),
                 actions: [
                     IconButton(

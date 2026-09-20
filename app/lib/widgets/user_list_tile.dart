@@ -1,7 +1,10 @@
 // =====================================================
 // 👤 BMSChat — ЭЛЕМЕНТ СПИСКА ПОЛЬЗОВАТЕЛЕЙ
 // =====================================================
+// 🎯 ЭТАП D.1: кэш аватаров через CachedNetworkImageProvider
+// =====================================================
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../models/user.dart';
@@ -82,8 +85,9 @@ class UserListTile extends StatelessWidget {
                 CircleAvatar(
                     radius: 24,
                     backgroundColor: RastaTheme.surfaceSecondary,
+                    // 🎯 ЭТАП D.1: кэш аватара на диск
                     backgroundImage: user.avatar != null
-                        ? NetworkImage(user.avatar!)
+                        ? CachedNetworkImageProvider(user.avatar!)
                         : null,
                     child: user.avatar == null
                         ? Text(

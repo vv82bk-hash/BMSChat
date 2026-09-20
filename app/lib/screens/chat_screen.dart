@@ -5,10 +5,22 @@
 // 🎯 ПАГИНАЦИЯ: подгрузка старых сообщений
 // 🎯 ОТСТУП ПОД СИСТЕМНУЮ НАВИГАЦИЮ
 // 🎯 ШАГ 15: настройки канала + вступление в канал
+// 🎯 ЭТАП B.1: меню «⋮» в AppBar + панель быстрых действий
+// 🎯 ЭТАП B.2: счётчик новых сообщений на кнопке скролла вниз
+// 🎯 ЭТАП B.3: цитата с текстом + свайп для ответа
+// 🎯 ЭТАП B.4: разделители дат («Сегодня», «Вчера», ...)
+// 🎯 ЭТАП D.4: дебаунс _onScroll + троттлинг _triggerLoadMore
+// 🎯 ЭТАП E.1: эмодзи-пикер (emoji_picker_flutter)
+//   • 😀 открывает панель эмодзи вместо клавиатуры
+//   • выбор эмодзи → вставка в позицию курсора
+//   • тап в поле ввода → скрыть панель, показать клавиатуру
+//   • отправка → скрыть панель
 // =====================================================
 
+import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../models/chat.dart';
@@ -38,6 +50,10 @@ class _ChatScreenState extends State<ChatScreen> {
     final _messageController = TextEditingController();
     final _scrollController = ScrollController();
     final _imagePicker = ImagePicker();
+
+    // 🎯 ЭТАП E.1: FocusNode для управления клавиатурой
+    final _inputFocusNode = FocusNode();
+
     bool _isTyping = false;
 
     bool _initialScrollDone = false;
@@ -50,8 +66,20 @@ class _ChatScreenState extends State<ChatScreen> {
     bool _isLoadingMore = false;
     int _lastSeenLastId = 0;
 
+    // 🎯 ЭТАП D.4: троттлинг _triggerLoadMore — не чаще 1 раза в 300 ms
+    DateTime? _lastLoadMoreAttempt;
+
     // 🎯 ШАГ 15: индикатор вступления в канал
     bool _isJoining = false;
+
+    // 🎯 ЭТАП B.2: счётчик новых сообщений ниже видимой области
+    int _unreadBelowCount = 0;
+
+    // 🎯 ЭТАП B.3: кэш сообщений по id — для быстрого поиска reply
+    final Map<int, Message> _messagesById = {};
+
+    // 🎯 ЭТАП E.1: показывать ли панель эмодзи
+    bool _showEmojiPicker = false;
 
     @override
     void initState() {
@@ -73,36 +101,78 @@ class _ChatScreenState extends State<ChatScreen> {
         _scrollController.removeListener(_onScroll);
         _messageController.dispose();
         _scrollController.dispose();
+        _inputFocusNode.dispose();
         super.dispose();
     }
 
     // ============================================
     // 📜 СКРОЛЛ
+    // 🎯 ЭТАП D.4: оптимизирован
     // ============================================
     void _onScroll() {
         if (!_scrollController.hasClients) return;
 
         final position = _scrollController.position;
-        final isNearBottom = position.pixels <= 200;
+        final pixels = position.pixels;
 
-        if (_showScrollButton == isNearBottom) {
-            setState(() => _showScrollButton = !isNearBottom);
+        // ─────────────────────────────────────────
+        // 1️⃣ Проверка «у низа» — для кнопки скролла + сброса счётчика
+        // ─────────────────────────────────────────
+        final isNearBottom = pixels <= 200;
+        final shouldResetUnread = pixels <= 50;
+
+        // setState вызываем ТОЛЬКО если реально меняется состояние
+        final needSetState =
+            (_showScrollButton == isNearBottom) || // меняется видимость
+            (shouldResetUnread && _unreadBelowCount > 0); // сброс счётчика
+
+        if (needSetState) {
+            setState(() {
+                _showScrollButton = !isNearBottom;
+                if (shouldResetUnread) _unreadBelowCount = 0;
+            });
         }
 
-        final isNearTop = position.pixels >= position.maxScrollExtent - 400;
-        if (isNearTop) {
-            _triggerLoadMore();
+        // ─────────────────────────────────────────
+        // 2️⃣ Проверка «у верха» — для пагинации
+        // 🎯 ЭТАП D.4: троттлинг — не чаще 1 раза в 300 ms
+        // ─────────────────────────────────────────
+        final isNearTop = pixels >= position.maxScrollExtent - 400;
+        if (!isNearTop) {
+            _lastLoadMoreAttempt = null;
+            return;
         }
+
+        final now = DateTime.now();
+        final lastAttempt = _lastLoadMoreAttempt;
+
+        if (lastAttempt != null &&
+            now.difference(lastAttempt).inMilliseconds < 300) {
+            return;
+        }
+
+        _lastLoadMoreAttempt = now;
+        _triggerLoadMore();
     }
 
     GlobalKey _getMessageKey(int messageId) {
         return _messageKeys.putIfAbsent(messageId, () => GlobalKey());
     }
 
+    /// 🎯 ЭТАП B.3: перестраиваем кэш сообщений по id
+    void _rebuildMessagesCache(List<Message> messages) {
+        _messagesById.clear();
+        for (final m in messages) {
+            _messagesById[m.id] = m;
+        }
+    }
+
     void _onChatChanged() {
         if (!mounted) return;
 
         final chat = Provider.of<ChatProvider>(context, listen: false);
+
+        _rebuildMessagesCache(chat.messages);
 
         if (!_initialScrollDone &&
             !chat.isLoadingMessages &&
@@ -137,6 +207,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
                 if (isNearBottom) {
                     _scrollToBottom();
+                    _unreadBelowCount = 0;
+                } else {
+                    _unreadBelowCount++;
                 }
 
                 chat.markAsRead();
@@ -195,14 +268,109 @@ class _ChatScreenState extends State<ChatScreen> {
         }
 
         _messageController.clear();
-        setState(() => _isTyping = false);
+        setState(() {
+            _isTyping = false;
+            // 🎯 ЭТАП E.1: скрываем панель эмодзи при отправке
+            _showEmojiPicker = false;
+        });
         _scrollToBottom();
     }
 
-    Future<void> _pickImage() async {
+    // ============================================
+    // 📎 ВЫБОР ФАЙЛА
+    // ============================================
+    Future<void> _pickFile() async {
+        final source = await showModalBottomSheet<ImageSource>(
+            context: context,
+            backgroundColor: RastaTheme.surface,
+            shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            builder: (_) => SafeArea(
+                child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                        const SizedBox(height: 8),
+                        Container(
+                            width: 40,
+                            height: 4,
+                            decoration: BoxDecoration(
+                                color:
+                                    RastaTheme.textMuted.withValues(alpha: 0.4),
+                                borderRadius: BorderRadius.circular(2),
+                            ),
+                        ),
+                        const SizedBox(height: 16),
+                        const Text(
+                            'Отправить',
+                            style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                color: RastaTheme.textPrimary,
+                            ),
+                        ),
+                        const SizedBox(height: 8),
+                        ListTile(
+                            leading: const Icon(
+                                Icons.photo_library_outlined,
+                                color: RastaTheme.rastaYellow,
+                                size: 28,
+                            ),
+                            title: const Text(
+                                'Фото из галереи',
+                                style: TextStyle(
+                                    color: RastaTheme.textPrimary,
+                                    fontSize: 16,
+                                ),
+                            ),
+                            onTap: () =>
+                                Navigator.pop(context, ImageSource.gallery),
+                        ),
+                        ListTile(
+                            leading: const Icon(
+                                Icons.camera_alt_outlined,
+                                color: RastaTheme.rastaYellow,
+                                size: 28,
+                            ),
+                            title: const Text(
+                                'Сделать фото',
+                                style: TextStyle(
+                                    color: RastaTheme.textPrimary,
+                                    fontSize: 16,
+                                ),
+                            ),
+                            onTap: () =>
+                                Navigator.pop(context, ImageSource.camera),
+                        ),
+                        ListTile(
+                            leading: const Icon(
+                                Icons.insert_drive_file_outlined,
+                                color: RastaTheme.rastaYellow,
+                                size: 28,
+                            ),
+                            title: const Text(
+                                'Документ',
+                                style: TextStyle(
+                                    color: RastaTheme.textPrimary,
+                                    fontSize: 16,
+                                ),
+                            ),
+                            onTap: () {
+                                Navigator.pop(context);
+                                _showInfo('Отправка документов — скоро');
+                            },
+                        ),
+                        const SizedBox(height: 8),
+                    ],
+                ),
+            ),
+        );
+
+        if (source == null || !mounted) return;
+
         try {
             final XFile? image = await _imagePicker.pickImage(
-                source: ImageSource.gallery,
+                source: source,
                 imageQuality: 50,
                 maxWidth: 1280,
                 maxHeight: 1280,
@@ -211,7 +379,7 @@ class _ChatScreenState extends State<ChatScreen> {
             if (image == null) return;
             if (!mounted) return;
 
-            _showInfo('Загрузка фото...');
+            _showInfo('Загрузка...');
 
             final chat = Provider.of<ChatProvider>(context, listen: false);
             final success = await chat.sendFile(image.path, 'image');
@@ -219,15 +387,64 @@ class _ChatScreenState extends State<ChatScreen> {
             if (!mounted) return;
 
             if (!success) {
-                _showError('Не удалось отправить фото');
+                _showError('Не удалось отправить');
             } else {
-                _showInfo('Фото отправлено');
+                _showInfo('Отправлено');
                 _scrollToBottom();
             }
         } catch (e) {
             if (!mounted) return;
-            _showError('Ошибка выбора фото: $e');
+            _showError('Ошибка: $e');
         }
+    }
+
+    // ============================================
+    // 🎤 ГОЛОСОВОЕ (заглушка)
+    // ============================================
+    void _pickVoice() {
+        _showInfo('🎤 Голосовые сообщения — скоро');
+    }
+
+    // ============================================
+    // 🎯 ЭТАП E.1: ЭМОДЗИ-ПИКЕР
+    // ============================================
+    void _pickEmoji() {
+        // Скрываем клавиатуру, показываем/скрываем панель эмодзи
+        if (!_showEmojiPicker) {
+            FocusScope.of(context).unfocus();
+        }
+        setState(() => _showEmojiPicker = !_showEmojiPicker);
+    }
+
+    /// 🎯 ЭТАП E.1: вставка эмодзи в позицию курсора
+    void _insertEmoji(String emoji) {
+        final text = _messageController.text;
+        final selection = _messageController.selection;
+
+        // Если курсор валиден — вставляем в его позицию,
+        // иначе — в конец
+        final cursorPos = selection.isValid ? selection.start : text.length;
+
+        final newText = text.substring(0, cursorPos) +
+            emoji +
+            text.substring(cursorPos);
+
+        _messageController.value = TextEditingValue(
+            text: newText,
+            selection: TextSelection.collapsed(
+                offset: cursorPos + emoji.length,
+            ),
+        );
+
+        // Триггерим onChanged (отправку typing)
+        _onTextChanged(newText);
+    }
+
+    // ============================================
+    // 📷 КАМЕРА
+    // ============================================
+    void _pickCamera() {
+        _pickFile();
     }
 
     void _onTextChanged(String text) {
@@ -286,6 +503,22 @@ class _ChatScreenState extends State<ChatScreen> {
         });
     }
 
+    /// 🎯 ЭТАП B.3: скролл к конкретному сообщению
+    void _scrollToMessage(int messageId) {
+        final key = _messageKeys[messageId];
+        if (key == null || key.currentContext == null) {
+            _showInfo('Сообщение не в зоне видимости');
+            return;
+        }
+
+        Scrollable.ensureVisible(
+            key.currentContext!,
+            duration: const Duration(milliseconds: 400),
+            curve: Curves.easeOutCubic,
+            alignment: 0.3,
+        );
+    }
+
     void _showError(String message) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -309,11 +542,67 @@ class _ChatScreenState extends State<ChatScreen> {
         );
     }
 
-    void _openUsers() {
-        Navigator.push(
-            context,
-            MaterialPageRoute(
-                builder: (_) => const UsersScreen(),
+    // ============================================
+    // 🎯 ЭТАП B.4: РАЗДЕЛИТЕЛИ ДАТ
+    // ============================================
+    bool _isSameDay(DateTime a, DateTime b) {
+        return a.year == b.year && a.month == b.month && a.day == b.day;
+    }
+
+    String _formatDateHeader(DateTime date) {
+        final now = DateTime.now();
+        final today = DateTime(now.year, now.month, now.day);
+        final yesterday = today.subtract(const Duration(days: 1));
+        final messageDay = DateTime(date.year, date.month, date.day);
+
+        if (messageDay == today) return 'Сегодня';
+        if (messageDay == yesterday) return 'Вчера';
+
+        final diffDays = today.difference(messageDay).inDays;
+        if (diffDays > 1 && diffDays < 7) {
+            const weekdays = [
+                'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс',
+            ];
+            return weekdays[date.weekday - 1];
+        }
+
+        if (date.year == now.year) {
+            const months = [
+                'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+                'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
+            ];
+            return '${date.day} ${months[date.month - 1]}';
+        }
+
+        return DateFormat('dd.MM.yyyy').format(date);
+    }
+
+    Widget _buildDateDivider(DateTime date) {
+        return Container(
+            alignment: Alignment.center,
+            padding: const EdgeInsets.only(top: 12, bottom: 6),
+            child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                    color: RastaTheme.surfaceSecondary,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: RastaTheme.separator.withValues(alpha: 0.5),
+                        width: 0.5,
+                    ),
+                ),
+                child: Text(
+                    _formatDateHeader(date),
+                    style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: RastaTheme.textMuted,
+                        letterSpacing: 0.3,
+                    ),
+                ),
             ),
         );
     }
@@ -374,6 +663,156 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     // ============================================
+    // 🎯 ЭТАП B.1: МЕНЮ «⋮» В APPBAR
+    // ============================================
+    Future<void> _openChatMenu(Chat chat) async {
+        final canManage = _canManageChannel(chat);
+        final isMember = chat.isMember;
+        final canLeave = (chat.isChannel || chat.type == 'group') && isMember;
+
+        final action = await showModalBottomSheet<String>(
+            context: context,
+            backgroundColor: Colors.transparent,
+            builder: (_) => Container(
+                decoration: const BoxDecoration(
+                    color: RastaTheme.surface,
+                    borderRadius: BorderRadius.vertical(
+                        top: Radius.circular(20),
+                    ),
+                ),
+                child: SafeArea(
+                    child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                            const SizedBox(height: 8),
+                            Container(
+                                width: 40,
+                                height: 4,
+                                decoration: BoxDecoration(
+                                    color: RastaTheme.textMuted
+                                        .withValues(alpha: 0.4),
+                                    borderRadius: BorderRadius.circular(2),
+                                ),
+                            ),
+                            const SizedBox(height: 8),
+
+                            _menuTile(
+                                icon: Icons.people_outline,
+                                title: 'Участники',
+                                onTap: () =>
+                                    Navigator.pop(context, 'members'),
+                            ),
+
+                            _menuTile(
+                                icon: Icons.info_outline,
+                                title: 'Информация о чате',
+                                onTap: () =>
+                                    Navigator.pop(context, 'info'),
+                            ),
+
+                            _menuTile(
+                                icon: Icons.search,
+                                title: 'Поиск в чате',
+                                onTap: () => Navigator.pop(context, 'search'),
+                            ),
+
+                            _menuTile(
+                                icon: Icons.notifications_off_outlined,
+                                title: 'Отключить уведомления',
+                                onTap: () =>
+                                    Navigator.pop(context, 'mute'),
+                            ),
+
+                            _menuTile(
+                                icon: Icons.cleaning_services_outlined,
+                                title: 'Очистить историю',
+                                onTap: () =>
+                                    Navigator.pop(context, 'clear'),
+                            ),
+
+                            if (chat.isChannel && canManage)
+                                _menuTile(
+                                    icon: Icons.settings_outlined,
+                                    title: 'Настройки канала',
+                                    onTap: () =>
+                                        Navigator.pop(context, 'settings'),
+                                ),
+
+                            if (canLeave)
+                                _menuTile(
+                                    icon: Icons.logout,
+                                    title: 'Покинуть чат',
+                                    color: RastaTheme.error,
+                                    onTap: () =>
+                                        Navigator.pop(context, 'leave'),
+                                ),
+
+                            const SizedBox(height: 8),
+                        ],
+                    ),
+                ),
+            ),
+        );
+
+        if (!mounted || action == null) return;
+
+        switch (action) {
+            case 'members':
+                _openUsers();
+                break;
+            case 'info':
+                _showInfo('Информация — скоро');
+                break;
+            case 'search':
+                _showInfo('Поиск — скоро');
+                break;
+            case 'mute':
+                _showInfo('Уведомления — скоро');
+                break;
+            case 'clear':
+                _showInfo('Очистка истории — скоро');
+                break;
+            case 'settings':
+                _openChannelSettings(chat);
+                break;
+            case 'leave':
+                _showInfo('Выход из чата — скоро');
+                break;
+        }
+    }
+
+    Widget _menuTile({
+        required IconData icon,
+        required String title,
+        required VoidCallback onTap,
+        Color? color,
+    }) {
+        final tileColor = color ?? RastaTheme.textPrimary;
+
+        return ListTile(
+            leading: Icon(icon, color: color ?? RastaTheme.rastaYellow, size: 26),
+            title: Text(
+                title,
+                style: TextStyle(
+                    color: tileColor,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                ),
+            ),
+            onTap: onTap,
+        );
+    }
+
+    void _openUsers() {
+        Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (_) => const UsersScreen(),
+            ),
+        );
+    }
+
+    // ============================================
     // 🎨 UI
     // ============================================
     @override
@@ -388,7 +827,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
         final navBarHeight = MediaQuery.viewPaddingOf(context).bottom;
 
-        // 🎯 ШАГ 15: канал, где я не участник?
         final isChannelNotMember = activeChat != null &&
             activeChat.isChannel &&
             !activeChat.isMember;
@@ -419,12 +857,15 @@ class _ChatScreenState extends State<ChatScreen> {
                                     child: Image.asset(
                                         'assets/images/logo.png',
                                         fit: BoxFit.cover,
-                                        errorBuilder: (context, error, stackTrace) {
+                                        errorBuilder:
+                                            (context, error, stackTrace) {
                                             return Container(
-                                                color: RastaTheme.surfaceSecondary,
+                                                color: RastaTheme
+                                                    .surfaceSecondary,
                                                 child: const Center(
                                                     child: Text('🎯',
-                                                        style: TextStyle(fontSize: 20)),
+                                                        style: TextStyle(
+                                                            fontSize: 20)),
                                                 ),
                                             );
                                         },
@@ -434,7 +875,6 @@ class _ChatScreenState extends State<ChatScreen> {
                             const SizedBox(width: 10),
                         ],
 
-                        // 🎯 ШАГ 15: для канала — эмодзи-аватар
                         if (activeChat != null &&
                             activeChat.isChannel &&
                             !activeChat.useLogoImage) ...[
@@ -474,27 +914,20 @@ class _ChatScreenState extends State<ChatScreen> {
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
                                     ),
-                                    if (activeChat != null) _buildSubtitle(chat),
+                                    if (activeChat != null)
+                                        _buildSubtitle(chat),
                                 ],
                             ),
                         ),
                     ],
                 ),
                 actions: [
-                    // 🎯 ШАГ 15: настройки канала
-                    if (activeChat != null &&
-                        activeChat.isChannel &&
-                        _canManageChannel(activeChat))
+                    if (activeChat != null)
                         IconButton(
-                            icon: const Icon(Icons.settings_outlined, size: 26),
-                            tooltip: 'Настройки канала',
-                            onPressed: () => _openChannelSettings(activeChat),
+                            icon: const Icon(Icons.more_vert, size: 26),
+                            tooltip: 'Меню',
+                            onPressed: () => _openChatMenu(activeChat),
                         ),
-                    IconButton(
-                        icon: const Icon(Icons.people_outline, size: 26),
-                        tooltip: 'Участники',
-                        onPressed: _openUsers,
-                    ),
                 ],
             ),
             body: Column(
@@ -505,13 +938,16 @@ class _ChatScreenState extends State<ChatScreen> {
                                 chat.isLoadingMessages
                                     ? const Center(
                                         child: CircularProgressIndicator(
-                                            valueColor: AlwaysStoppedAnimation<Color>(
-                                                RastaTheme.rastaYellow,
-                                            ),
+                                            valueColor:
+                                                AlwaysStoppedAnimation<Color>(
+                                                    RastaTheme.rastaYellow,
+                                                ),
                                         ),
                                     )
                                     : chat.messages.isEmpty
-                                        ? _buildEmptyState(activeChat?.useLogoImage ?? false)
+                                        ? _buildEmptyState(activeChat
+                                                ?.useLogoImage ??
+                                            false)
                                         : ListView.builder(
                                             controller: _scrollController,
                                             reverse: true,
@@ -521,25 +957,75 @@ class _ChatScreenState extends State<ChatScreen> {
                                             ),
                                             itemCount: chat.messages.length,
                                             itemBuilder: (context, index) {
-                                                final message = chat.messages[
-                                                    chat.messages.length - 1 - index
-                                                ];
-                                                final isOwn =
-                                                    message.senderId == currentUserId;
+                                                final msgIndex = chat
+                                                        .messages.length -
+                                                    1 -
+                                                    index;
+                                                final message =
+                                                    chat.messages[msgIndex];
+                                                final isOwn = message
+                                                        .senderId ==
+                                                    currentUserId;
 
-                                                return AnimatedMessageWrapper(
-                                                    key: _getMessageKey(message.id),
-                                                    messageId: message.id,
-                                                    child: MessageBubble(
-                                                        message: message,
-                                                        isOwn: isOwn,
-                                                        onLongPress: () =>
-                                                            _showReactionPicker(
-                                                                context,
-                                                                message,
-                                                                isOwn,
+                                                final replyTo = message
+                                                            .replyToId !=
+                                                        null
+                                                    ? _messagesById[
+                                                        message.replyToId]
+                                                    : null;
+
+                                                final prevMessage =
+                                                    msgIndex > 0
+                                                        ? chat.messages[
+                                                            msgIndex - 1]
+                                                        : null;
+                                                final showDate =
+                                                    prevMessage == null ||
+                                                        !_isSameDay(
+                                                            message.createdAt,
+                                                            prevMessage
+                                                                .createdAt,
+                                                        );
+
+                                                return Column(
+                                                    key: _getMessageKey(
+                                                        message.id),
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment
+                                                            .stretch,
+                                                    children: [
+                                                        if (showDate)
+                                                            _buildDateDivider(
+                                                                message
+                                                                    .createdAt,
                                                             ),
-                                                    ),
+                                                        AnimatedMessageWrapper(
+                                                            messageId:
+                                                                message.id,
+                                                            child: MessageBubble(
+                                                                message:
+                                                                    message,
+                                                                isOwn: isOwn,
+                                                                replyTo:
+                                                                    replyTo,
+                                                                onLongPress: () =>
+                                                                    _showReactionPicker(
+                                                                        context,
+                                                                        message,
+                                                                        isOwn,
+                                                                    ),
+                                                                onReply: () {
+                                                                    chat.setReplyTo(
+                                                                        message);
+                                                                },
+                                                                onReplyTap: replyTo !=
+                                                                        null
+                                                                    ? () => _scrollToMessage(
+                                                                        replyTo.id)
+                                                                    : null,
+                                                            ),
+                                                        ),
+                                                    ],
                                                 );
                                             },
                                         ),
@@ -557,11 +1043,14 @@ class _ChatScreenState extends State<ChatScreen> {
                                                 child: SizedBox(
                                                     width: 24,
                                                     height: 24,
-                                                    child: CircularProgressIndicator(
+                                                    child:
+                                                        CircularProgressIndicator(
                                                         strokeWidth: 2,
                                                         valueColor:
-                                                            AlwaysStoppedAnimation<Color>(
-                                                                RastaTheme.rastaYellow,
+                                                            AlwaysStoppedAnimation<
+                                                                Color>(
+                                                                RastaTheme
+                                                                    .rastaYellow,
                                                             ),
                                                     ),
                                                 ),
@@ -574,12 +1063,16 @@ class _ChatScreenState extends State<ChatScreen> {
                                     bottom: 16,
                                     child: AnimatedScale(
                                         scale: _showScrollButton ? 1.0 : 0.0,
-                                        duration: const Duration(milliseconds: 200),
+                                        duration: const Duration(
+                                            milliseconds: 200),
                                         curve: Curves.easeOutBack,
                                         child: AnimatedOpacity(
-                                            opacity: _showScrollButton ? 1.0 : 0.0,
-                                            duration: const Duration(milliseconds: 200),
-                                            child: _buildScrollToBottomButton(),
+                                            opacity:
+                                                _showScrollButton ? 1.0 : 0.0,
+                                            duration: const Duration(
+                                                milliseconds: 200),
+                                            child:
+                                                _buildScrollToBottomButton(),
                                         ),
                                     ),
                                 ),
@@ -587,18 +1080,152 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                     ),
 
-                    // 🎯 ШАГ 15: блок «Вступить в канал»
                     if (isChannelNotMember)
                         _buildJoinChannelBlock(activeChat)
                     else if (canWrite) ...[
                         if (chat.replyToMessage != null)
                             _buildReplyPreview(chat),
+                        _buildQuickActionsBar(),
                         _buildInputField(),
+                        // 🎯 ЭТАП E.1: панель эмодзи
+                        if (_showEmojiPicker) _buildEmojiPicker(),
                     ] else
                         _buildBlockedField(permissionError),
 
                     SizedBox(height: navBarHeight),
                 ],
+            ),
+        );
+    }
+
+    // =====================================================
+    // 🎯 ЭТАП E.1: ПАНЕЛЬ ЭМОДЗИ
+    // =====================================================
+    Widget _buildEmojiPicker() {
+        return SizedBox(
+            height: 280,
+            child: EmojiPicker(
+                onEmojiSelected: (category, emoji) {
+                    _insertEmoji(emoji.emoji);
+                },
+                config: const Config(
+                    height: 280,
+                    checkPlatformCompatibility: true,
+                    emojiViewConfig: EmojiViewConfig(
+                        backgroundColor: RastaTheme.background,
+                        emojiSizeMax: 26,
+                        verticalSpacing: 0,
+                        horizontalSpacing: 0,
+                        gridPadding: EdgeInsets.zero,
+                        recentsLimit: 28,
+                        noRecents: Text(
+                            'Нет недавних',
+                            style: TextStyle(
+                                fontSize: 14,
+                                color: RastaTheme.textMuted,
+                            ),
+                            textAlign: TextAlign.center,
+                        ),
+                        loadingIndicator:
+                            CircularProgressIndicator(
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                                RastaTheme.rastaYellow,
+                            ),
+                        ),
+                        columns: 8,
+                        buttonMode: ButtonMode.MATERIAL,
+                    ),
+                    skinToneConfig: SkinToneConfig(
+                        enabled: true,
+                        dialogBackgroundColor: RastaTheme.surface,
+                        indicatorColor: RastaTheme.rastaYellow,
+                    ),
+                    categoryViewConfig: CategoryViewConfig(
+                        backgroundColor: RastaTheme.surface,
+                        indicatorColor: RastaTheme.rastaYellow,
+                        iconColor: RastaTheme.textMuted,
+                        iconColorSelected: RastaTheme.rastaYellow,
+                        backspaceColor: RastaTheme.rastaYellow,
+                        categoryIcons: CategoryIcons(),
+                        recentTabBehavior: RecentTabBehavior.RECENT,
+                        customCategoryView: null,
+                    ),
+                    bottomActionBarConfig: BottomActionBarConfig(
+                        showBackspaceButton: true,
+                        showSearchViewButton: false,
+                        backgroundColor: RastaTheme.surface,
+                        buttonColor: RastaTheme.textMuted,
+                        buttonIconColor: RastaTheme.textMuted,
+                    ),
+                    searchViewConfig: SearchViewConfig(
+                        backgroundColor: RastaTheme.surface,
+                        buttonIconColor: RastaTheme.rastaYellow,
+                        hintText: 'Поиск эмодзи',
+                    ),
+                ),
+            ),
+        );
+    }
+
+    // =====================================================
+    // 🎯 ЭТАП B.1: ПАНЕЛЬ БЫСТРЫХ ДЕЙСТВИЙ
+    // =====================================================
+    Widget _buildQuickActionsBar() {
+        return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+                color: RastaTheme.surface,
+                border: Border(
+                    top: BorderSide(
+                        color: RastaTheme.separator.withValues(alpha: 0.5),
+                        width: 0.5,
+                    ),
+                ),
+            ),
+            child: Row(
+                children: [
+                    _quickAction(
+                        icon: Icons.attach_file,
+                        tooltip: 'Прикрепить',
+                        onTap: _pickFile,
+                    ),
+                    _quickAction(
+                        icon: Icons.camera_alt_outlined,
+                        tooltip: 'Камера',
+                        onTap: _pickCamera,
+                    ),
+                    _quickAction(
+                        icon: Icons.mic_none,
+                        tooltip: 'Голосовое',
+                        onTap: _pickVoice,
+                    ),
+                    _quickAction(
+                        // 🎯 ЭТАП E.1: меняем иконку когда открыт пикер
+                        icon: _showEmojiPicker
+                            ? Icons.keyboard_alt_outlined
+                            : Icons.emoji_emotions_outlined,
+                        tooltip: _showEmojiPicker
+                            ? 'Клавиатура'
+                            : 'Эмодзи',
+                        onTap: _pickEmoji,
+                    ),
+                ],
+            ),
+        );
+    }
+
+    Widget _quickAction({
+        required IconData icon,
+        required String tooltip,
+        required VoidCallback onTap,
+    }) {
+        return Tooltip(
+            message: tooltip,
+            child: IconButton(
+                icon: Icon(icon, size: 24),
+                color: RastaTheme.rastaYellow,
+                onPressed: onTap,
+                splashRadius: 22,
             ),
         );
     }
@@ -707,48 +1334,102 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     // =====================================================
-    // 🎯 КНОПКА СКРОЛЛА ВНИЗ
+    // 🎯 ЭТАП B.2: КНОПКА СКРОЛЛА ВНИЗ С БЕЙДЖЕМ
     // =====================================================
     Widget _buildScrollToBottomButton() {
         return GestureDetector(
             onTap: () {
                 _scrollToBottom();
-                setState(() => _showScrollButton = false);
+                setState(() {
+                    _showScrollButton = false;
+                    _unreadBelowCount = 0;
+                });
             },
-            child: Container(
-                width: 52,
-                height: 52,
-                decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: const LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [
-                            RastaTheme.rastaYellow,
-                            RastaTheme.rastaGreen,
-                        ],
-                    ),
-                    boxShadow: [
-                        BoxShadow(
-                            color: RastaTheme.rastaYellow.withValues(alpha: 0.5),
-                            blurRadius: 15,
-                            spreadRadius: 2,
-                            offset: const Offset(0, 4),
+            child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                    Container(
+                        width: 52,
+                        height: 52,
+                        decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: const LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [
+                                    RastaTheme.rastaYellow,
+                                    RastaTheme.rastaGreen,
+                                ],
+                            ),
+                            boxShadow: [
+                                BoxShadow(
+                                    color: RastaTheme.rastaYellow
+                                        .withValues(alpha: 0.5),
+                                    blurRadius: 15,
+                                    spreadRadius: 2,
+                                    offset: const Offset(0, 4),
+                                ),
+                                BoxShadow(
+                                    color:
+                                        Colors.black.withValues(alpha: 0.3),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 2),
+                                ),
+                            ],
                         ),
-                        BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.3),
-                            blurRadius: 8,
-                            offset: const Offset(0, 2),
+                        child: const Center(
+                            child: Icon(
+                                Icons.keyboard_arrow_down_rounded,
+                                color: Colors.black,
+                                size: 32,
+                            ),
                         ),
-                    ],
-                ),
-                child: const Center(
-                    child: Icon(
-                        Icons.keyboard_arrow_down_rounded,
-                        color: Colors.black,
-                        size: 32,
                     ),
-                ),
+
+                    if (_unreadBelowCount > 0)
+                        Positioned(
+                            right: -4,
+                            top: -4,
+                            child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2,
+                                ),
+                                constraints: const BoxConstraints(
+                                    minWidth: 22,
+                                    minHeight: 22,
+                                ),
+                                decoration: BoxDecoration(
+                                    color: RastaTheme.error,
+                                    borderRadius: BorderRadius.circular(11),
+                                    border: Border.all(
+                                        color: RastaTheme.background,
+                                        width: 2,
+                                    ),
+                                    boxShadow: [
+                                        BoxShadow(
+                                            color: RastaTheme.error
+                                                .withValues(alpha: 0.6),
+                                            blurRadius: 8,
+                                            spreadRadius: 1,
+                                        ),
+                                    ],
+                                ),
+                                child: Text(
+                                    _unreadBelowCount > 99
+                                        ? '99+'
+                                        : '$_unreadBelowCount',
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                        height: 1.2,
+                                    ),
+                                ),
+                            ),
+                        ),
+                ],
             ),
         );
     }
@@ -785,7 +1466,6 @@ class _ChatScreenState extends State<ChatScreen> {
             );
         }
 
-        // 🎯 ШАГ 15: для каналов — приватость
         if (activeChat.isChannel) {
             return Text(
                 activeChat.isPrivate
@@ -827,7 +1507,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                     width: 120,
                                     height: 120,
                                     fit: BoxFit.cover,
-                                    errorBuilder: (context, error, stackTrace) {
+                                    errorBuilder:
+                                        (context, error, stackTrace) {
                                         return const Text(
                                             '💬',
                                             style: TextStyle(fontSize: 64),
@@ -896,7 +1577,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 ),
                                 const SizedBox(height: 2),
                                 Text(
-                                    replyTo.displayText,
+                                    replyTo.displayPreview,
                                     style: const TextStyle(
                                         fontSize: 14,
                                         color: RastaTheme.textMuted,
@@ -934,21 +1615,20 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             child: Row(
                 children: [
-                    IconButton(
-                        icon: const Icon(
-                            Icons.attach_file,
-                            color: RastaTheme.rastaYellow,
-                            size: 26,
-                        ),
-                        onPressed: _pickImage,
-                        tooltip: 'Фото',
-                    ),
-
                     Expanded(
                         child: TextField(
                             controller: _messageController,
+                            // 🎯 ЭТАП E.1: используем FocusNode
+                            focusNode: _inputFocusNode,
                             onChanged: _onTextChanged,
                             onSubmitted: (_) => _sendMessage(),
+                            // 🎯 ЭТАП E.1: при тапе скрываем пикер эмодзи
+                            onTap: () {
+                                if (_showEmojiPicker) {
+                                    setState(
+                                        () => _showEmojiPicker = false);
+                                }
+                            },
                             maxLines: 4,
                             minLines: 1,
                             textInputAction: TextInputAction.send,
