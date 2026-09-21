@@ -13,7 +13,7 @@
 // с backend'ом, а backend — с Supabase.
 //
 // Схема:
-//   Flutter → Backend (Node.js) → Supabase (PostgreSQL)
+//   Flutter → Backend (Node.js, облако) → Supabase (PostgreSQL)
 // =====================================================
 
 import 'dart:io' show Platform;
@@ -23,23 +23,25 @@ class Constants {
     // =====================================================
     // 🌍 БАЗОВЫЙ URL СЕРВЕРА
     // =====================================================
-    // ⚠️ Backend сейчас работает локально (localhost:5000).
-    // Когда развернёшь backend в облаке — обнови:
-    //   • _prodUrl — на публичный URL backend'а
-    //   • _localUrlAndroid — на IP компьютера в локальной сети
+    // ⚠️ Backend развёрнут в облаке (Рег.облако).
+    // Публичный IP: 194.226.123.103
+    // Порт: 5000
+    //
+    // 🎯 APK подключается с любой сети (сотовая, Wi-Fi).
+    // 🎯 Web на компьютере использует localhost:5000
+    //     для локальной разработки.
     // =====================================================
 
-    /// Продакшн — пока локальный backend.
-    /// ⚠️ TODO: заменить на облачный URL, когда развернём backend.
-    static const String _prodUrl = 'http://localhost:5000';
+    /// Продакшн — облачный backend на сервере Рег.облака.
+    /// 🎯 Доступен из любой сети (сотовая, Wi-Fi).
+    static const String _prodUrl = 'http://194.226.123.103:5000';
 
-    /// Debug-сборка на реальном Android-телефоне.
-    /// ⚠️ Для реального телефона localhost не подойдёт —
-    /// нужен IP компьютера в локальной сети (например, 192.168.1.100:5000).
-    /// Узнать IP: `ipconfig | findstr IPv4` в PowerShell.
-    static const String _localUrlAndroid = 'http://localhost:5000';
+    /// Debug-сборка — тот же облачный backend.
+    /// 🎯 Работает с любого телефона, в любой сети.
+    static const String _localUrlAndroid = 'http://194.226.123.103:5000';
 
     /// Локальная разработка (iOS-симулятор / web)
+    /// 🎯 Для web-тестирования на компьютере.
     static const String _localUrlDefault = 'http://localhost:5000';
 
     /// Автоматический выбор URL

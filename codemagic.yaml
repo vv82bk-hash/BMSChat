@@ -19,7 +19,11 @@ workflows:
       
       - name: Install pods
         script: |
-          cd ios && pod install --repo-update
+          cd ios
+          rm -f Podfile.lock
+          rm -rf Pods
+          pod install --repo-update
+          cd ..
       
       - name: Build iOS (without codesign)
         script: |
