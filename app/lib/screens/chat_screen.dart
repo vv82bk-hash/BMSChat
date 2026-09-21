@@ -14,6 +14,7 @@
 // 🎯 ЭМОДЗИ «Потарахтеть» в AppBar
 // 🎯 ПАНЕЛЬ 4 КНОПОК — только при фокусе
 // 🎯 FIX (web upload): sendFile принимает XFile, а не path
+// 🎯 FIX (дубли + анимация): openChat перенесён сюда из ChatsScreen
 // =====================================================
 
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
@@ -89,8 +90,14 @@ class _ChatScreenState extends State<ChatScreen> {
 
         _scrollController.addListener(_onScroll);
 
-        WidgetsBinding.instance.addPostFrameCallback((_) {
+        WidgetsBinding.instance.addPostFrameCallback((_) async {
             final chat = Provider.of<ChatProvider>(context, listen: false);
+
+            // 🎯 FIX: загружаем чат и сообщения ЗДЕСЬ (перенесено из ChatsScreen)
+            await chat.openChat(widget.chatId);
+
+            if (!mounted) return;
+
             _lastReadBeforeOpen = chat.myLastReadMessageId;
             chat.addListener(_onChatChanged);
         });

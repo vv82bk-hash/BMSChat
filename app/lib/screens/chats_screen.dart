@@ -11,8 +11,11 @@
 // 🎯 ЭМОДЗИ «Потарахтеть»:
 //   • _buildChatIcon использует displayEmoji для ВСЕХ чатов —
 //     если emoji задано (например, 🍁), оно и показывается.
+// 🎯 FIX (дубли + анимация): защита от двойного нажатия,
+//    CupertinoPageRoute (справа), openChat перенесён в ChatScreen.
 // =====================================================
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -33,6 +36,9 @@ class ChatsScreen extends StatefulWidget {
 
 class _ChatsScreenState extends State<ChatsScreen> {
     bool _initialLoadDone = false;
+
+    // 🎯 FIX: защита от двойного нажатия
+    bool _isOpeningChat = false;
 
     // 🎯 ЭТАП C.4: поиск
     final _searchController = TextEditingController();
@@ -98,69 +104,58 @@ class _ChatsScreenState extends State<ChatsScreen> {
 
     // ============================================
     // 📂 ОТКРЫТИЕ ЧАТА
+    // 🎯 FIX: защита от двойного нажатия + CupertinoPageRoute
+    // 🎯 openChat перенесён в ChatScreen.initState
     // ============================================
     Future<void> _openChat(Chat chat) async {
-        AppLogger.info('📂 Открытие: ${chat.title}');
+        if (_isOpeningChat) return;
+        _isOpeningChat = true;
 
-        if (chat.isChannel && !chat.isMember) {
-            if (chat.isPrivate) {
-                _showInfo('Это приватный канал — нужно приглашение');
-                return;
+        try {
+            AppLogger.info('📂 Открытие: ${chat.title}');
+
+            if (chat.isChannel && !chat.isMember) {
+                if (chat.isPrivate) {
+                    _showInfo('Это приватный канал — нужно приглашение');
+                    return;
+                }
+
+                final shouldJoin = await _confirmJoin(chat);
+                if (shouldJoin != true) return;
+                if (!mounted) return;
+
+                final chatProvider =
+                    Provider.of<ChatProvider>(context, listen: false);
+                final joined = await chatProvider.joinChannel(chat.id);
+
+                if (!mounted) return;
+
+                if (!joined) {
+                    final reason =
+                        chatProvider.chatsError ?? 'неизвестная ошибка';
+                    _showInfo('Не удалось вступить: $reason');
+                    return;
+                }
+
+                _showInfo('Вы вступили в канал');
             }
 
-            final shouldJoin = await _confirmJoin(chat);
-            if (shouldJoin != true) return;
             if (!mounted) return;
 
-            final chatProvider =
-                Provider.of<ChatProvider>(context, listen: false);
-            final joined = await chatProvider.joinChannel(chat.id);
-
-            if (!mounted) return;
-
-            if (!joined) {
-                final reason = chatProvider.chatsError ?? 'неизвестная ошибка';
-                _showInfo('Не удалось вступить: $reason');
-                return;
+            if (_isSearching) {
+                _toggleSearch();
             }
 
-            _showInfo('Вы вступили в канал');
+            // 🎯 openChat вызовется в ChatScreen.initState
+            Navigator.of(context).push(
+                CupertinoPageRoute(
+                    settings: RouteSettings(name: 'chat_${chat.id}'),
+                    builder: (_) => ChatScreen(chatId: chat.id),
+                ),
+            );
+        } finally {
+            _isOpeningChat = false;
         }
-
-        if (!mounted) return;
-
-        final chatProvider = Provider.of<ChatProvider>(context, listen: false);
-        await chatProvider.openChat(chat.id);
-
-        if (!mounted) return;
-
-        if (_isSearching) {
-            _toggleSearch();
-        }
-
-        Navigator.of(context).push(
-            PageRouteBuilder(
-                pageBuilder: (_, __, ___) => ChatScreen(chatId: chat.id),
-                transitionsBuilder: (_, animation, __, child) {
-                    final curvedAnimation = CurvedAnimation(
-                        parent: animation,
-                        curve: Curves.easeOutCubic,
-                    );
-
-                    return SlideTransition(
-                        position: Tween<Offset>(
-                            begin: const Offset(0, 1),
-                            end: Offset.zero,
-                        ).animate(curvedAnimation),
-                        child: FadeTransition(
-                            opacity: curvedAnimation,
-                            child: child,
-                        ),
-                    );
-                },
-                transitionDuration: const Duration(milliseconds: 300),
-            ),
-        );
     }
 
     // ============================================
@@ -503,7 +498,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
                                     overflow: TextOverflow.ellipsis,
                                 ),
                             ),
-                            // 🎯 ✌️ убран
                         ],
                     ),
                 actions: [
@@ -1163,10 +1157,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
     // ============================================
     // 🎨 ИКОНКА ЧАТА
     // ============================================
-    // 🎯 Используем displayEmoji для ВСЕХ чатов:
-    //   • Если emoji задано (например, 🍁 для «Потарахтеть») — оно.
-    //   • Если канал без emoji — '📢'.
-    //   • Иначе — стандартная иконка типа.
     Widget _buildChatIcon(Chat chat) {
         return Text(
             chat.displayEmoji,

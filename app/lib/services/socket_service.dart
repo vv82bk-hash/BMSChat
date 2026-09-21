@@ -8,6 +8,7 @@
 //   • Галочки прочтения
 //   • Реакции, редактирование, удаление
 //   • 👑 Уведомления о новых новобранцах
+// 🎯 FIX: transports ['websocket', 'polling'] — fallback для мобильных.
 // =====================================================
 
 import 'dart:async';
@@ -48,48 +49,71 @@ class SocketService {
     static final _statusController = StreamController<SocketStatus>.broadcast();
     static Stream<SocketStatus> get onStatusChange => _statusController.stream;
 
-    static final _newMessageController = StreamController<Map<String, dynamic>>.broadcast();
-    static Stream<Map<String, dynamic>> get onNewMessage => _newMessageController.stream;
+    static final _newMessageController =
+        StreamController<Map<String, dynamic>>.broadcast();
+    static Stream<Map<String, dynamic>> get onNewMessage =>
+        _newMessageController.stream;
 
-    static final _userTypingController = StreamController<Map<String, dynamic>>.broadcast();
-    static Stream<Map<String, dynamic>> get onUserTyping => _userTypingController.stream;
+    static final _userTypingController =
+        StreamController<Map<String, dynamic>>.broadcast();
+    static Stream<Map<String, dynamic>> get onUserTyping =>
+        _userTypingController.stream;
 
-    static final _userStoppedTypingController = StreamController<Map<String, dynamic>>.broadcast();
-    static Stream<Map<String, dynamic>> get onUserStoppedTyping => _userStoppedTypingController.stream;
+    static final _userStoppedTypingController =
+        StreamController<Map<String, dynamic>>.broadcast();
+    static Stream<Map<String, dynamic>> get onUserStoppedTyping =>
+        _userStoppedTypingController.stream;
 
-    static final _userOnlineController = StreamController<Map<String, dynamic>>.broadcast();
-    static Stream<Map<String, dynamic>> get onUserOnline => _userOnlineController.stream;
+    static final _userOnlineController =
+        StreamController<Map<String, dynamic>>.broadcast();
+    static Stream<Map<String, dynamic>> get onUserOnline =>
+        _userOnlineController.stream;
 
-    static final _userOfflineController = StreamController<Map<String, dynamic>>.broadcast();
-    static Stream<Map<String, dynamic>> get onUserOffline => _userOfflineController.stream;
+    static final _userOfflineController =
+        StreamController<Map<String, dynamic>>.broadcast();
+    static Stream<Map<String, dynamic>> get onUserOffline =>
+        _userOfflineController.stream;
 
-    static final _messageReadController = StreamController<Map<String, dynamic>>.broadcast();
-    static Stream<Map<String, dynamic>> get onMessageRead => _messageReadController.stream;
+    static final _messageReadController =
+        StreamController<Map<String, dynamic>>.broadcast();
+    static Stream<Map<String, dynamic>> get onMessageRead =>
+        _messageReadController.stream;
 
-    static final _messageEditedController = StreamController<Map<String, dynamic>>.broadcast();
-    static Stream<Map<String, dynamic>> get onMessageEdited => _messageEditedController.stream;
+    static final _messageEditedController =
+        StreamController<Map<String, dynamic>>.broadcast();
+    static Stream<Map<String, dynamic>> get onMessageEdited =>
+        _messageEditedController.stream;
 
-    static final _messageDeletedController = StreamController<Map<String, dynamic>>.broadcast();
-    static Stream<Map<String, dynamic>> get onMessageDeleted => _messageDeletedController.stream;
+    static final _messageDeletedController =
+        StreamController<Map<String, dynamic>>.broadcast();
+    static Stream<Map<String, dynamic>> get onMessageDeleted =>
+        _messageDeletedController.stream;
 
-    static final _reactionAddedController = StreamController<Map<String, dynamic>>.broadcast();
-    static Stream<Map<String, dynamic>> get onReactionAdded => _reactionAddedController.stream;
+    static final _reactionAddedController =
+        StreamController<Map<String, dynamic>>.broadcast();
+    static Stream<Map<String, dynamic>> get onReactionAdded =>
+        _reactionAddedController.stream;
 
-    static final _reactionRemovedController = StreamController<Map<String, dynamic>>.broadcast();
-    static Stream<Map<String, dynamic>> get onReactionRemoved => _reactionRemovedController.stream;
+    static final _reactionRemovedController =
+        StreamController<Map<String, dynamic>>.broadcast();
+    static Stream<Map<String, dynamic>> get onReactionRemoved =>
+        _reactionRemovedController.stream;
 
     static final _onlineCountController = StreamController<int>.broadcast();
     static Stream<int> get onOnlineCount => _onlineCountController.stream;
 
-    static final _errorController = StreamController<Map<String, dynamic>>.broadcast();
+    static final _errorController =
+        StreamController<Map<String, dynamic>>.broadcast();
     static Stream<Map<String, dynamic>> get onError => _errorController.stream;
 
     // ─────────────────────────────────────────
     // 👑 ЗАЯВКИ
     // ─────────────────────────────────────────
 
-    static final _newRecruitController = StreamController<Map<String, dynamic>>.broadcast();
-    static Stream<Map<String, dynamic>> get onNewRecruit => _newRecruitController.stream;
+    static final _newRecruitController =
+        StreamController<Map<String, dynamic>>.broadcast();
+    static Stream<Map<String, dynamic>> get onNewRecruit =>
+        _newRecruitController.stream;
 
     static final _pendingCountController = StreamController<int>.broadcast();
     static Stream<int> get onPendingCount => _pendingCountController.stream;
@@ -98,6 +122,11 @@ class SocketService {
     // 🔌 ПОДКЛЮЧЕНИЕ
     // =====================================================
 
+    /// 🎯 Подключение к Socket.IO.
+    /// 
+    /// transports: ['websocket', 'polling'] — если WebSocket блокируется
+    /// (мобильные операторы, корпоративные firewall), автоматически
+    /// переключается на polling через HTTP.
     static Future<bool> connect(String token) async {
         if (_socket != null) {
             disconnect();
@@ -112,12 +141,16 @@ class SocketService {
             _socket = io.io(
                 Constants.socketUrl,
                 io.OptionBuilder()
-                    .setTransports(['websocket'])
+                    // 🎯 FIX: WebSocket + polling fallback.
+                    // Polling — через HTTP, мобильный оператор НЕ блокирует.
+                    .setTransports(['websocket', 'polling'])
                     .setAuth({'token': token})
                     .enableForceNew()
                     .enableReconnection()
-                    .setReconnectionAttempts(5)
-                    .setReconnectionDelay(1000)
+                    .setReconnectionAttempts(20)     // 🎯 было 5
+                    .setReconnectionDelay(1000)      // 🎯 1 сек
+                    .setReconnectionDelayMax(5000)   // 🎯 до 5 сек
+                    .setTimeout(20000)               // 🎯 20 сек
                     .build(),
             );
 
@@ -142,7 +175,7 @@ class SocketService {
     }
 
     // =====================================================
-    // 🎯 РЕГИСТРАЦИЯ ОБРАБОТЧИКОВ
+    // 🎧 РЕГИСТРАЦИЯ ОБРАБОТЧИКОВ
     // =====================================================
 
     static void _registerHandlers() {
@@ -189,10 +222,11 @@ class SocketService {
             }
         });
 
-        // ⏹️ Перестал печатать
+        // ⏹ Перестал печатать
         _socket!.on(SocketEvents.userStoppedTyping, (data) {
             if (data is Map) {
-                _userStoppedTypingController.add(Map<String, dynamic>.from(data));
+                _userStoppedTypingController
+                    .add(Map<String, dynamic>.from(data));
             }
         });
 
@@ -210,21 +244,21 @@ class SocketService {
             }
         });
 
-        // ✓✓ Сообщение прочитано
+        // ✅ Прочитано
         _socket!.on(SocketEvents.messageRead, (data) {
             if (data is Map) {
                 _messageReadController.add(Map<String, dynamic>.from(data));
             }
         });
 
-        // ✏️ Сообщение отредактировано
+        // ✏️ Отредактировано
         _socket!.on(SocketEvents.messageEdited, (data) {
             if (data is Map) {
                 _messageEditedController.add(Map<String, dynamic>.from(data));
             }
         });
 
-        // 🗑️ Сообщение удалено
+        // 🗑️ Удалено
         _socket!.on(SocketEvents.messageDeleted, (data) {
             if (data is Map) {
                 _messageDeletedController.add(Map<String, dynamic>.from(data));
@@ -238,46 +272,44 @@ class SocketService {
             }
         });
 
-        // 🗑️ Реакция удалена
+        // 😀 Реакция убрана
         _socket!.on(SocketEvents.reactionRemoved, (data) {
             if (data is Map) {
                 _reactionRemovedController.add(Map<String, dynamic>.from(data));
             }
         });
 
-        // 📊 Количество онлайн
-        _socket!.on(SocketEvents.onlineCount, (count) {
-            if (count is int) {
-                _onlineCountController.add(count);
+        // 👥 Счётчик онлайна
+        _socket!.on(SocketEvents.onlineCount, (data) {
+            if (data is int) {
+                _onlineCountController.add(data);
+            } else if (data is Map && data['count'] is int) {
+                _onlineCountController.add(data['count'] as int);
+            }
+        });
+
+        // 👑 Новый новобранец
+        _socket!.on(SocketEvents.newRecruit, (data) {
+            if (data is Map) {
+                AppLogger.success('🔔 Новый новобранец');
+                _newRecruitController.add(Map<String, dynamic>.from(data));
+            }
+        });
+
+        // 📊 Счётчик заявок
+        _socket!.on(SocketEvents.pendingCount, (data) {
+            if (data is int) {
+                _pendingCountController.add(data);
+            } else if (data is Map && data['count'] is int) {
+                _pendingCountController.add(data['count'] as int);
             }
         });
 
         // ❌ Ошибка от сервера
         _socket!.on(SocketEvents.error, (data) {
             if (data is Map) {
-                AppLogger.warn('Socket ошибка от сервера', data);
+                AppLogger.warn('Socket ошибка сервера', data);
                 _errorController.add(Map<String, dynamic>.from(data));
-            }
-        });
-
-        // ─────────────────────────────────────────
-        // 👑 НОВЫЙ НОВОБРАНЕЦ
-        // ─────────────────────────────────────────
-        _socket!.on(SocketEvents.newRecruit, (data) {
-            if (data is Map) {
-                AppLogger.success('🔔 Новый новобранец', data['user']);
-                _newRecruitController.add(Map<String, dynamic>.from(data));
-            }
-        });
-
-        // ─────────────────────────────────────────
-        // 👑 КОЛИЧЕСТВО ЗАЯВОК
-        // ─────────────────────────────────────────
-        _socket!.on(SocketEvents.pendingCount, (data) {
-            if (data is Map) {
-                final count = data['count'] as int? ?? 0;
-                AppLogger.socket('📊 Заявок: $count');
-                _pendingCountController.add(count);
             }
         });
     }
@@ -286,63 +318,71 @@ class SocketService {
     // 📤 ОТПРАВКА СОБЫТИЙ
     // =====================================================
 
-    static void joinChats() {
-        _socket?.emit(SocketEvents.joinChats);
-    }
-
-    static void joinAdmins() {
-        _socket?.emit(SocketEvents.joinAdmins);
-    }
-
-    static void sendTyping(int chatId) {
-        if (!isConnected) return;
-        _socket?.emit(SocketEvents.typing, {'chatId': chatId});
-    }
-
-    static void sendStopTyping(int chatId) {
-        if (!isConnected) return;
-        _socket?.emit(SocketEvents.stopTyping, {'chatId': chatId});
-    }
-
     static void sendMessage({
         required int chatId,
         required String text,
         int? replyToId,
         int? tempId,
     }) {
-        if (!isConnected) {
+        if (_socket == null || !isConnected) {
             AppLogger.warn('Socket не подключён — сообщение не отправлено');
             return;
         }
 
-        _socket?.emit(SocketEvents.sendMessage, {
+        _socket!.emit(SocketEvents.sendMessage, {
             'chatId': chatId,
             'text': text,
             if (replyToId != null) 'replyToId': replyToId,
             if (tempId != null) 'tempId': tempId,
         });
+
+        AppLogger.socket('📤 Отправлено в чат $chatId', text);
+    }
+
+    static void sendTyping(int chatId) {
+        if (_socket == null || !isConnected) return;
+        _socket!.emit(SocketEvents.typing, {'chatId': chatId});
+    }
+
+    static void sendStopTyping(int chatId) {
+        if (_socket == null || !isConnected) return;
+        _socket!.emit(SocketEvents.stopTyping, {'chatId': chatId});
     }
 
     static void markRead(int chatId, int messageId) {
-        if (!isConnected) return;
-        _socket?.emit(SocketEvents.markRead, {
+        if (_socket == null || !isConnected) return;
+        _socket!.emit(SocketEvents.markRead, {
             'chatId': chatId,
             'messageId': messageId,
         });
     }
 
     // =====================================================
-    // 🛠️ ВСПОМОГАТЕЛЬНЫЕ
+    // 🛠️ СЛУЖЕБНЫЕ
     // =====================================================
 
     static void _setStatus(SocketStatus status) {
+        if (_status == status) return;
         _status = status;
-        if (!_statusController.isClosed) {
-            _statusController.add(status);
-        }
+        _statusController.add(status);
     }
 
-    static Future<void> disposeAll() async {
+    static void dispose() {
         disconnect();
+        _statusController.close();
+        _newMessageController.close();
+        _userTypingController.close();
+        _userStoppedTypingController.close();
+        _userOnlineController.close();
+        _userOfflineController.close();
+        _messageReadController.close();
+        _messageEditedController.close();
+        _messageDeletedController.close();
+        _reactionAddedController.close();
+        _reactionRemovedController.close();
+        _onlineCountController.close();
+        _errorController.close();
+        _newRecruitController.close();
+        _pendingCountController.close();
     }
 }
