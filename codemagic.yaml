@@ -1,0 +1,30 @@
+workflows:
+  ios-workflow:
+    name: iOS Build
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+    
+    # 🎯 Ключевой параметр: указываем папку с Flutter-проектом
+    working_directory: app
+    
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+    
+    scripts:
+      - name: Get Flutter packages
+        script: |
+          flutter pub get
+      
+      - name: Install pods
+        script: |
+          cd ios && pod install --repo-update
+      
+      - name: Build iOS (without codesign)
+        script: |
+          flutter build ios --release --no-codesign
+    
+    artifacts:
+      - build/ios/iphoneos/*.app
+      - build/ios/archive/*.xcarchive
