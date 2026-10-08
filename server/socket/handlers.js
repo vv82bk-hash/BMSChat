@@ -1,6 +1,8 @@
 // =====================================================
 // 🎯 BMSChat — ОБРАБОТЧИКИ SOCKET.IO (PostgreSQL)
 // =====================================================
+// 🎯 2026-09-21: queryWithRetry — защита от сбоев Supavisor
+// =====================================================
 
 const { pool } = require('../database/init');
 const {
@@ -17,6 +19,40 @@ const onlineUsers = new Map();
 const TYPING_TIMEOUT = 3000;
 
 // =====================================================
+// 🔄 RETRY-ЛОГИКА
+// =====================================================
+async function queryWithRetry(sql, params, context = 'query', maxRetries = 3) {
+    let lastError;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            return await pool.query(sql, params);
+        } catch (err) {
+            lastError = err;
+
+            const isRetryable =
+                err.message.includes('Query read timeout') ||
+                err.message.includes('timeout exceeded') ||
+                err.message.includes('Connection terminated') ||
+                ['ETIMEDOUT', 'ECONNRESET', 'EPIPE'].includes(err.code);
+
+            if (!isRetryable || attempt === maxRetries) {
+                throw err;
+            }
+
+            const delay = Math.min(500 * Math.pow(2, attempt - 1), 2000);
+            logger.warn(
+                `[${context}] retry ${attempt}/${maxRetries} ` +
+                `(${err.message}), ждём ${delay}ms`
+            );
+            await new Promise((r) => setTimeout(r, delay));
+        }
+    }
+
+    throw lastError;
+}
+
+// =====================================================
 // 🚀 РЕГИСТРАЦИЯ ОБРАБОТЧИКОВ
 // =====================================================
 function registerHandlers(io) {
@@ -30,7 +66,6 @@ function registerHandlers(io) {
             handleJoinChats(socket, userId);
         });
 
-        // 👑 Подписка на канал заявок (только для тех, у кого есть право)
         socket.on('join_admins', () => {
             handleJoinAdmins(socket, user);
         });
@@ -62,14 +97,13 @@ function registerHandlers(io) {
 // =====================================================
 async function handleJoinAdmins(socket, user) {
     try {
-        // Проверяем, есть ли у пользователя право подтверждать
-        const result = await pool.query(`
+        const result = await queryWithRetry(`
             SELECT 1
             FROM user_roles ur
             INNER JOIN roles r ON r.id = ur.role_id
             WHERE ur.user_id = $1 AND r.can_approve_users = TRUE
             LIMIT 1
-        `, [user.id]);
+        `, [user.id], 'handleJoinAdmins');
 
         if (result.rows.length === 0) {
             logger.warn('Нет права на канал заявок', { userId: user.id });
@@ -82,9 +116,10 @@ async function handleJoinAdmins(socket, user) {
             displayName: user.display_name,
         });
 
-        // Отправляем количество текущих заявок
-        const pending = await pool.query(
-            'SELECT COUNT(*) as cnt FROM users WHERE is_approved = FALSE'
+        const pending = await queryWithRetry(
+            'SELECT COUNT(*) as cnt FROM users WHERE is_approved = FALSE',
+            [],
+            'handleJoinAdmins:pending'
         );
         socket.emit('pending_count', {
             count: parseInt(pending.rows[0].cnt, 10),
@@ -97,12 +132,12 @@ async function handleJoinAdmins(socket, user) {
 // =====================================================
 // 🔔 УВЕДОМЛЕНИЕ О НОВОМ НОВОБРАНЦЕ
 // =====================================================
-// Экспортируем — чтобы вызывать из роутов (auth.js)
-// =====================================================
 async function notifyAdminsNewRecruit(io, newUser) {
     try {
-        const pending = await pool.query(
-            'SELECT COUNT(*) as cnt FROM users WHERE is_approved = FALSE'
+        const pending = await queryWithRetry(
+            'SELECT COUNT(*) as cnt FROM users WHERE is_approved = FALSE',
+            [],
+            'notifyAdminsNewRecruit'
         );
         const count = parseInt(pending.rows[0].cnt, 10);
 
@@ -140,11 +175,11 @@ async function handleUserOnline(io, socket, user) {
 
     if (onlineUsers.get(userId).size === 1) {
         try {
-            await pool.query(`
+            await queryWithRetry(`
                 UPDATE users
                 SET status = 'online', last_seen = NOW()
                 WHERE id = $1
-            `, [userId]);
+            `, [userId], 'handleUserOnline');
 
             io.emit('user_online', {
                 userId: user.id,
@@ -168,9 +203,10 @@ async function handleUserOnline(io, socket, user) {
 // =====================================================
 async function handleJoinChats(socket, userId) {
     try {
-        const result = await pool.query(
+        const result = await queryWithRetry(
             'SELECT chat_id FROM chat_members WHERE user_id = $1',
-            [userId]
+            [userId],
+            'handleJoinChats'
         );
 
         result.rows.forEach(({ chat_id }) => {
@@ -272,15 +308,15 @@ async function handleSendMessage(io, socket, user, data) {
             return;
         }
 
-        const result = await pool.query(`
+        const result = await queryWithRetry(`
             INSERT INTO messages (chat_id, sender_id, text, reply_to_id)
             VALUES ($1, $2, $3, $4)
             RETURNING id
-        `, [chatId, user.id, text?.trim() || null, replyToId || null]);
+        `, [chatId, user.id, text?.trim() || null, replyToId || null], 'handleSendMessage:insert');
 
         const messageId = result.rows[0].id;
 
-        const messageResult = await pool.query(`
+        const messageResult = await queryWithRetry(`
             SELECT 
                 m.id, m.chat_id, m.sender_id, m.text, m.reply_to_id,
                 m.is_deleted, m.is_edited, m.created_at, m.updated_at,
@@ -288,14 +324,12 @@ async function handleSendMessage(io, socket, user, data) {
             FROM messages m
             INNER JOIN users u ON u.id = m.sender_id
             WHERE m.id = $1
-        `, [messageId]);
+        `, [messageId], 'handleSendMessage:select');
 
         const message = messageResult.rows[0];
 
-        // Останавливаем «печатает»
         handleStopTyping(io, socket, user, { chatId });
 
-        // Рассылаем всем в комнате
         io.to(`chat_${chatId}`).emit('new_message', {
             ...message,
             reactions: [],
@@ -324,11 +358,11 @@ async function handleMarkRead(io, socket, user, data) {
         const access = await checkChatAccess(chatId, user.id);
         if (!access.allowed) return;
 
-        await pool.query(`
+        await queryWithRetry(`
             UPDATE chat_members
             SET last_read_message_id = $1
             WHERE chat_id = $2 AND user_id = $3
-        `, [messageId, chatId, user.id]);
+        `, [messageId, chatId, user.id], 'handleMarkRead');
 
         socket.to(`chat_${chatId}`).emit('message_read', {
             chatId,
@@ -353,11 +387,11 @@ async function handleDisconnect(io, socket, user) {
             onlineUsers.delete(userId);
 
             try {
-                await pool.query(`
+                await queryWithRetry(`
                     UPDATE users
                     SET status = 'offline', last_seen = NOW()
                     WHERE id = $1
-                `, [userId]);
+                `, [userId], 'handleDisconnect');
 
                 io.emit('user_offline', {
                     userId: user.id,
@@ -371,7 +405,6 @@ async function handleDisconnect(io, socket, user) {
         }
     }
 
-    // Убираем из «печатающих»
     for (const [key, val] of typingUsers.entries()) {
         if (val.userId === userId) {
             clearTimeout(val.timeout);

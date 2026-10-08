@@ -13,6 +13,8 @@
 //     если emoji задано (например, 🍁), оно и показывается.
 // 🎯 FIX (дубли + анимация): защита от двойного нажатия,
 //    CupertinoPageRoute (справа), openChat перенесён в ChatScreen.
+// 🎯 ОПТИМИЗАЦИЯ: Selector вместо Consumer + ListView.builder
+//    для регулярных чатов + CustomScrollView для секций.
 // =====================================================
 
 import 'package:flutter/cupertino.dart';
@@ -513,9 +515,16 @@ class _ChatsScreenState extends State<ChatsScreen> {
                         _buildCreateChannelButton(),
                 ],
             ),
-            body: Consumer<ChatProvider>(
-                builder: (context, chat, child) {
-                    if (chat.isLoadingChats && !_initialLoadDone) {
+            // 🎯 ОПТИМИЗАЦИЯ: Selector вместо Consumer
+            // Перестраивает виджет ТОЛЬКО при изменении списка chats
+            body: Selector<ChatProvider, _ChatsState>(
+                selector: (_, provider) => _ChatsState(
+                    chats: provider.chats,
+                    isLoading: provider.isLoadingChats,
+                    error: provider.chatsError,
+                ),
+                builder: (context, state, child) {
+                    if (state.isLoading && !_initialLoadDone) {
                         return const Center(
                             child: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
@@ -539,11 +548,11 @@ class _ChatsScreenState extends State<ChatsScreen> {
                         );
                     }
 
-                    if (chat.chatsError != null) {
-                        return _buildErrorState(chat.chatsError!);
+                    if (state.error != null) {
+                        return _buildErrorState(state.error!);
                     }
 
-                    if (chat.chats.isEmpty) {
+                    if (state.chats.isEmpty) {
                         return _buildEmptyState();
                     }
 
@@ -553,7 +562,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
                                 onRefresh: _onRefresh,
                                 color: RastaTheme.rastaYellow,
                                 backgroundColor: RastaTheme.surface,
-                                child: _buildChatsList(chat),
+                                child: _buildChatsList(state.chats),
                             ),
 
                             Positioned(
@@ -624,54 +633,81 @@ class _ChatsScreenState extends State<ChatsScreen> {
 
     // =====================================================
     // 🎯 ЭТАП C.4: СПИСОК ЧАТОВ (с секциями)
+    // 🎯 ОПТИМИЗАЦИЯ: ListView.builder для регулярных чатов +
+    //    CustomScrollView для секций (pinned + regular)
     // =====================================================
-    Widget _buildChatsList(ChatProvider provider) {
+    Widget _buildChatsList(List<Chat> chats) {
         if (_isSearching && _searchQuery.isNotEmpty) {
-            return _buildSearchResults(provider);
+            return _buildSearchResults(chats);
         }
 
-        final pinned = provider.pinnedChats;
-        final regular = provider.regularChats;
+        final provider = Provider.of<ChatProvider>(context, listen: false);
+        final pinned = chats.where((c) => provider.isPinned(c.id)).toList();
+        final regular = chats.where((c) => !provider.isPinned(c.id)).toList();
 
         if (pinned.isEmpty && regular.isEmpty) {
             return _buildEmptyState();
         }
 
-        final List<Widget> items = [];
-
-        if (pinned.isNotEmpty) {
-            items.add(_buildSectionHeader('📌 Закреплённые'));
-            for (final chat in pinned) {
-                items.add(_buildChatTile(chat, provider));
-            }
-            items.add(const SizedBox(height: 6));
+        // 🎯 Если только регулярные — используем ListView.builder (быстрее)
+        if (pinned.isEmpty) {
+            return ListView.builder(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                itemCount: regular.length,
+                itemBuilder: (context, index) {
+                    return _buildChatTile(regular[index], provider);
+                },
+            );
         }
 
-        if (regular.isNotEmpty) {
-            if (pinned.isNotEmpty) {
-                items.add(_buildSectionHeader('Чаты'));
-            }
-            for (final chat in regular) {
-                items.add(_buildChatTile(chat, provider));
-            }
-        }
-
-        return ListView(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            children: items,
+        // 🎯 Если есть закреплённые — используем CustomScrollView
+        return CustomScrollView(
+            slivers: [
+                // 📌 Секция закреплённых
+                SliverToBoxAdapter(
+                    child: _buildSectionHeader('📌 Закреплённые'),
+                ),
+                SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                        (context, index) {
+                            return _buildChatTile(pinned[index], provider);
+                        },
+                        childCount: pinned.length,
+                    ),
+                ),
+                const SliverToBoxAdapter(child: SizedBox(height: 6)),
+                // 💬 Секция обычных
+                if (regular.isNotEmpty) ...[
+                    SliverToBoxAdapter(
+                        child: _buildSectionHeader('Чаты'),
+                    ),
+                    SliverList(
+                        delegate: SliverChildBuilderDelegate(
+                            (context, index) {
+                                return _buildChatTile(
+                                    regular[index],
+                                    provider,
+                                );
+                            },
+                            childCount: regular.length,
+                        ),
+                    ),
+                ],
+            ],
         );
     }
 
     // =====================================================
     // 🎯 ЭТАП C.4: РЕЗУЛЬТАТЫ ПОИСКА
     // =====================================================
-    Widget _buildSearchResults(ChatProvider provider) {
-        final allChats = [...provider.pinnedChats, ...provider.regularChats];
-        final results = _filterChats(allChats);
+    Widget _buildSearchResults(List<Chat> chats) {
+        final results = _filterChats(chats);
 
         if (results.isEmpty) {
             return _buildNoResults();
         }
+
+        final provider = Provider.of<ChatProvider>(context, listen: false);
 
         return ListView.builder(
             padding: const EdgeInsets.symmetric(vertical: 4),
@@ -1323,4 +1359,45 @@ class _OnlineInfo {
         this.isOnline = false,
         this.text,
     });
+}
+
+// =====================================================
+// 🎯 Selector state — для оптимизации перестроек
+// =====================================================
+class _ChatsState {
+    final List<Chat> chats;
+    final bool isLoading;
+    final String? error;
+
+    const _ChatsState({
+        required this.chats,
+        required this.isLoading,
+        required this.error,
+    });
+
+    @override
+    bool operator ==(Object other) {
+        if (identical(this, other)) return true;
+        if (other is! _ChatsState) return false;
+        return _listEquals(chats, other.chats) &&
+            isLoading == other.isLoading &&
+            error == other.error;
+    }
+
+    @override
+    int get hashCode => Object.hash(
+        Object.hashAll(chats.map((c) => c.id)),
+        isLoading,
+        error,
+    );
+
+    static bool _listEquals(List<Chat> a, List<Chat> b) {
+        if (a.length != b.length) return false;
+        for (int i = 0; i < a.length; i++) {
+            if (a[i].id != b[i].id) return false;
+            if (a[i].unreadCount != b[i].unreadCount) return false;
+            if (a[i].lastMessageId != b[i].lastMessageId) return false;
+        }
+        return true;
+    }
 }

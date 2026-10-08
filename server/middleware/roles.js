@@ -2,10 +2,70 @@
 // 🎭 BMSChat — MIDDLEWARE ПРОВЕРКИ РОЛЕЙ (PostgreSQL)
 // =====================================================
 // ⚠️ Все функции — async (await при вызове!)
+//
+// 🎯 2026-09-21:
+//   • getMergedPermissions — 1 запрос (BOOL_OR)
+//   • isCommanderOrHigher — 1 запрос
+//   • queryWithRetry — maxRetries=2 (быстрее сдаётся)
+//   • Кэш getMergedPermissions на 30 сек (меньше запросов к БД)
 // =====================================================
 
 const { pool } = require('../database/init');
 const logger = require('../utils/logger');
+
+// =====================================================
+// 🔄 RETRY-ЛОГИКА (maxRetries=2 — быстрее)
+// =====================================================
+async function queryWithRetry(sql, params, context = 'query', maxRetries = 2) {
+    let lastError;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            return await pool.query(sql, params);
+        } catch (err) {
+            lastError = err;
+
+            const isRetryable =
+                err.message.includes('Query read timeout') ||
+                err.message.includes('timeout exceeded') ||
+                err.message.includes('Connection terminated') ||
+                ['ETIMEDOUT', 'ECONNRESET', 'EPIPE'].includes(err.code);
+
+            if (!isRetryable || attempt === maxRetries) {
+                throw err;
+            }
+
+            const delay = 500;
+            logger.warn(
+                `[${context}] retry ${attempt}/${maxRetries} ` +
+                `(${err.message}), ждём ${delay}ms`
+            );
+            await new Promise((r) => setTimeout(r, delay));
+        }
+    }
+
+    throw lastError;
+}
+
+// =====================================================
+// 🎯 КЭШ ПРАВ ПОЛЬЗОВАТЕЛЯ (TTL 30 секунд)
+// =====================================================
+const _permsCache = new Map();
+const PERMS_TTL = 30 * 1000; // 30 секунд
+
+/**
+ * Сброс кэша прав.
+ * @param {number|null} userId — если указан, сбросить только его; иначе — весь кэш
+ */
+function clearPermsCache(userId = null) {
+    if (userId) {
+        _permsCache.delete(userId);
+        logger.info(`🗑️ Кэш прав сброшен для user=${userId}`);
+    } else {
+        _permsCache.clear();
+        logger.info('🗑️ Весь кэш прав сброшен');
+    }
+}
 
 // =====================================================
 // 📋 ПОЛУЧЕНИЕ РОЛЕЙ
@@ -15,33 +75,62 @@ const logger = require('../utils/logger');
  * Загружает все роли пользователя
  */
 async function getUserRoles(userId) {
-    const result = await pool.query(`
+    const result = await queryWithRetry(`
         SELECT r.*
         FROM roles r
         INNER JOIN user_roles ur ON ur.role_id = r.id
         WHERE ur.user_id = $1
         ORDER BY r.priority DESC
-    `, [userId]);
+    `, [userId], 'getUserRoles');
 
     return result.rows;
 }
 
 /**
  * Возвращает объединённые права пользователя (8 штук)
+ * 🎯 ОДИН запрос + кэш на 30 секунд
  */
 async function getMergedPermissions(userId) {
-    const roles = await getUserRoles(userId);
+    // 🎯 Проверяем кэш
+    const cached = _permsCache.get(userId);
+    if (cached && Date.now() - cached.cachedAt < PERMS_TTL) {
+        return cached.perms;
+    }
 
-    return {
-        can_write_general: roles.some((r) => r.can_write_general),
-        can_write_private: roles.some((r) => r.can_write_private),
-        can_write_to_commander: roles.some((r) => r.can_write_to_commander),
-        can_create_feed: roles.some((r) => r.can_create_feed),
-        can_approve_users: roles.some((r) => r.can_approve_users),
-        can_manage_roles: roles.some((r) => r.can_manage_roles),
-        can_manage_users: roles.some((r) => r.can_manage_users),
-        can_assign_commanders: roles.some((r) => r.can_assign_commanders),
+    const result = await queryWithRetry(`
+        SELECT
+            BOOL_OR(r.can_write_general) AS can_write_general,
+            BOOL_OR(r.can_write_private) AS can_write_private,
+            BOOL_OR(r.can_write_to_commander) AS can_write_to_commander,
+            BOOL_OR(r.can_create_feed) AS can_create_feed,
+            BOOL_OR(r.can_approve_users) AS can_approve_users,
+            BOOL_OR(r.can_manage_roles) AS can_manage_roles,
+            BOOL_OR(r.can_manage_users) AS can_manage_users,
+            BOOL_OR(r.can_assign_commanders) AS can_assign_commanders
+        FROM roles r
+        INNER JOIN user_roles ur ON ur.role_id = r.id
+        WHERE ur.user_id = $1
+    `, [userId], 'getMergedPermissions');
+
+    const perms = result.rows[0] || {};
+    const result_perms = {
+        can_write_general: perms.can_write_general || false,
+        can_write_private: perms.can_write_private || false,
+        can_write_to_commander: perms.can_write_to_commander || false,
+        can_create_feed: perms.can_create_feed || false,
+        can_approve_users: perms.can_approve_users || false,
+        can_manage_roles: perms.can_manage_roles || false,
+        can_manage_users: perms.can_manage_users || false,
+        can_assign_commanders: perms.can_assign_commanders || false,
     };
+
+    // 🎯 Сохраняем в кэш
+    _permsCache.set(userId, {
+        perms: result_perms,
+        cachedAt: Date.now(),
+    });
+
+    return result_perms;
 }
 
 /**
@@ -64,12 +153,12 @@ async function hasAnyPermission(userId, permissions) {
  * Есть ли роль?
  */
 async function hasRole(userId, roleName) {
-    const result = await pool.query(`
+    const result = await queryWithRetry(`
         SELECT 1 FROM roles r
         INNER JOIN user_roles ur ON ur.role_id = r.id
         WHERE ur.user_id = $1 AND r.name = $2
         LIMIT 1
-    `, [userId, roleName]);
+    `, [userId, roleName], 'hasRole');
 
     return result.rows.length > 0;
 }
@@ -83,9 +172,17 @@ async function isAdmin(userId) {
 
 /**
  * Командир или выше?
+ * 🎯 ОДИН запрос вместо двух hasRole
  */
 async function isCommanderOrHigher(userId) {
-    return (await hasRole(userId, 'Командир')) || (await hasRole(userId, 'Администратор'));
+    const result = await queryWithRetry(`
+        SELECT 1 FROM roles r
+        INNER JOIN user_roles ur ON ur.role_id = r.id
+        WHERE ur.user_id = $1 AND r.name IN ('Командир', 'Администратор')
+        LIMIT 1
+    `, [userId], 'isCommanderOrHigher');
+
+    return result.rows.length > 0;
 }
 
 // =====================================================
@@ -213,4 +310,5 @@ module.exports = {
     requireAnyPermission,
     requireRole,
     requireAdmin,
+    clearPermsCache,  // 🎯 НОВОЕ
 };

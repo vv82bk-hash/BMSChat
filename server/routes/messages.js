@@ -1,6 +1,8 @@
 // =====================================================
 // 📝 BMSChat — РОУТЫ СООБЩЕНИЙ (PostgreSQL)
 // =====================================================
+// 🎯 2026-09-21: queryWithRetry — защита от сбоев Supavisor
+// =====================================================
 
 const express = require('express');
 const router = express.Router();
@@ -17,13 +19,41 @@ const {
 const logger = require('../utils/logger');
 
 // =====================================================
-// 📜 GET /api/messages/:chatId
+// 🔄 RETRY-ЛОГИКА
 // =====================================================
-// Возвращает:
-//   • messages — список сообщений
-//   • hasMore — есть ли ещё
-//   • maxReadId — максимальный ID прочитанного среди других
-//   • myLastReadId — мой последний прочитанный
+async function queryWithRetry(sql, params, context = 'query', maxRetries = 3) {
+    let lastError;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            return await pool.query(sql, params);
+        } catch (err) {
+            lastError = err;
+
+            const isRetryable =
+                err.message.includes('Query read timeout') ||
+                err.message.includes('timeout exceeded') ||
+                err.message.includes('Connection terminated') ||
+                ['ETIMEDOUT', 'ECONNRESET', 'EPIPE'].includes(err.code);
+
+            if (!isRetryable || attempt === maxRetries) {
+                throw err;
+            }
+
+            const delay = Math.min(500 * Math.pow(2, attempt - 1), 2000);
+            logger.warn(
+                `[${context}] retry ${attempt}/${maxRetries} ` +
+                `(${err.message}), ждём ${delay}ms`
+            );
+            await new Promise((r) => setTimeout(r, delay));
+        }
+    }
+
+    throw lastError;
+}
+
+// =====================================================
+// 📜 GET /api/messages/:chatId
 // =====================================================
 router.get('/:chatId', authMiddleware, async (req, res) => {
     try {
@@ -36,9 +66,7 @@ router.get('/:chatId', authMiddleware, async (req, res) => {
             return res.status(403).json({ error: access.reason });
         }
 
-        // ─────────────────────────────────────────
         // 1️⃣ Сообщения
-        // ─────────────────────────────────────────
         let query = `
             SELECT 
                 m.id, m.chat_id, m.sender_id, m.text, m.reply_to_id,
@@ -58,13 +86,10 @@ router.get('/:chatId', authMiddleware, async (req, res) => {
         query += ` ORDER BY m.created_at DESC LIMIT $${params.length + 1}`;
         params.push(limit);
 
-        const result = await pool.query(query, params);
+        const result = await queryWithRetry(query, params, 'GET /messages:messages');
 
-        // ─────────────────────────────────────────
         // 2️⃣ Статусы прочтения
-        // ─────────────────────────────────────────
-        // maxReadId — максимальный ID прочитанного СРЕДИ ДРУГИХ
-        const readStatusResult = await pool.query(`
+        const readStatusResult = await queryWithRetry(`
             SELECT 
                 (SELECT MAX(last_read_message_id) 
                  FROM chat_members 
@@ -72,7 +97,7 @@ router.get('/:chatId', authMiddleware, async (req, res) => {
                 (SELECT last_read_message_id 
                  FROM chat_members 
                  WHERE chat_id = $1 AND user_id = $2) as my_last_read_id
-        `, [chatId, req.user.id]);
+        `, [chatId, req.user.id], 'GET /messages:readStatus');
 
         const maxReadId = readStatusResult.rows[0]?.max_read_id || 0;
         const myLastReadId = readStatusResult.rows[0]?.my_last_read_id || 0;
@@ -88,15 +113,13 @@ router.get('/:chatId', authMiddleware, async (req, res) => {
 
         const messageIds = result.rows.map((m) => m.id);
 
-        // ─────────────────────────────────────────
         // 3️⃣ Реакции
-        // ─────────────────────────────────────────
-        const reactionsResult = await pool.query(`
+        const reactionsResult = await queryWithRetry(`
             SELECT r.message_id, r.emoji, r.user_id, u.display_name
             FROM reactions r
             INNER JOIN users u ON u.id = r.user_id
             WHERE r.message_id = ANY($1::int[])
-        `, [messageIds]);
+        `, [messageIds], 'GET /messages:reactions');
 
         const reactionsByMessage = {};
         for (const r of reactionsResult.rows) {
@@ -110,15 +133,13 @@ router.get('/:chatId', authMiddleware, async (req, res) => {
             });
         }
 
-        // ─────────────────────────────────────────
         // 4️⃣ Вложения
-        // ─────────────────────────────────────────
-        const attachmentsResult = await pool.query(`
+        const attachmentsResult = await queryWithRetry(`
             SELECT id, message_id, file_type, file_path, file_name,
                    file_size, mime_type, duration, width, height
             FROM attachments
             WHERE message_id = ANY($1::int[])
-        `, [messageIds]);
+        `, [messageIds], 'GET /messages:attachments');
 
         const attachmentsByMessage = {};
         for (const a of attachmentsResult.rows) {
@@ -138,9 +159,7 @@ router.get('/:chatId', authMiddleware, async (req, res) => {
             });
         }
 
-        // ─────────────────────────────────────────
         // 5️⃣ Собираем
-        // ─────────────────────────────────────────
         const messages = result.rows.map((m) => ({
             ...m,
             text: m.is_deleted ? null : m.text,
@@ -186,24 +205,24 @@ router.post('/:chatId', authMiddleware, async (req, res) => {
         }
 
         if (reply_to_id) {
-            const replyTo = await pool.query(`
+            const replyTo = await queryWithRetry(`
                 SELECT id, chat_id FROM messages WHERE id = $1 AND is_deleted = FALSE
-            `, [reply_to_id]);
+            `, [reply_to_id], 'POST /messages:replyCheck');
 
             if (replyTo.rows.length === 0 || replyTo.rows[0].chat_id !== chatId) {
                 return res.status(400).json({ error: 'Сообщение для ответа не найдено' });
             }
         }
 
-        const result = await pool.query(`
+        const result = await queryWithRetry(`
             INSERT INTO messages (chat_id, sender_id, text, reply_to_id)
             VALUES ($1, $2, $3, $4)
             RETURNING id
-        `, [chatId, req.user.id, trimmedText, reply_to_id || null]);
+        `, [chatId, req.user.id, trimmedText, reply_to_id || null], 'POST /messages:insert');
 
         const messageId = result.rows[0].id;
 
-        const messageResult = await pool.query(`
+        const messageResult = await queryWithRetry(`
             SELECT 
                 m.id, m.chat_id, m.sender_id, m.text, m.reply_to_id,
                 m.is_deleted, m.is_edited, m.created_at, m.updated_at,
@@ -211,7 +230,7 @@ router.post('/:chatId', authMiddleware, async (req, res) => {
             FROM messages m
             INNER JOIN users u ON u.id = m.sender_id
             WHERE m.id = $1
-        `, [messageId]);
+        `, [messageId], 'POST /messages:select');
 
         const message = messageResult.rows[0];
 
@@ -257,11 +276,11 @@ router.put('/:id', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'Текст слишком длинный' });
         }
 
-        await pool.query(`
+        await queryWithRetry(`
             UPDATE messages
             SET text = $1, is_edited = TRUE, updated_at = NOW()
             WHERE id = $2
-        `, [trimmedText, messageId]);
+        `, [trimmedText, messageId], 'PUT /messages');
 
         const io = req.app.get('io');
         const chatId = access.message.chat_id;
@@ -300,11 +319,11 @@ router.delete('/:id', authMiddleware, async (req, res) => {
             return res.status(403).json({ error: access.reason });
         }
 
-        await pool.query(`
+        await queryWithRetry(`
             UPDATE messages
             SET is_deleted = TRUE, text = NULL, updated_at = NOW()
             WHERE id = $1
-        `, [messageId]);
+        `, [messageId], 'DELETE /messages');
 
         const io = req.app.get('io');
         const chatId = access.message.chat_id;
@@ -347,9 +366,9 @@ router.post('/:id/reactions', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'Emoji слишком длинный' });
         }
 
-        const messageResult = await pool.query(`
+        const messageResult = await queryWithRetry(`
             SELECT id, chat_id, is_deleted FROM messages WHERE id = $1
-        `, [messageId]);
+        `, [messageId], 'POST reactions:messageCheck');
 
         if (messageResult.rows.length === 0) {
             return res.status(404).json({ error: 'Сообщение не найдено' });
@@ -367,10 +386,10 @@ router.post('/:id/reactions', authMiddleware, async (req, res) => {
         }
 
         try {
-            await pool.query(`
+            await queryWithRetry(`
                 INSERT INTO reactions (message_id, user_id, emoji)
                 VALUES ($1, $2, $3)
-            `, [messageId, req.user.id, emoji]);
+            `, [messageId, req.user.id, emoji], 'POST reactions:insert');
         } catch (e) {
             if (e.message.includes('duplicate')) {
                 return res.status(400).json({ error: 'Вы уже поставили эту реакцию' });
@@ -410,9 +429,9 @@ router.delete('/:id/reactions/:emoji', authMiddleware, async (req, res) => {
         const messageId = parseInt(req.params.id, 10);
         const emoji = decodeURIComponent(req.params.emoji);
 
-        const messageResult = await pool.query(`
+        const messageResult = await queryWithRetry(`
             SELECT id, chat_id FROM messages WHERE id = $1
-        `, [messageId]);
+        `, [messageId], 'DELETE reactions:messageCheck');
 
         if (messageResult.rows.length === 0) {
             return res.status(404).json({ error: 'Сообщение не найдено' });
@@ -425,10 +444,10 @@ router.delete('/:id/reactions/:emoji', authMiddleware, async (req, res) => {
             return res.status(403).json({ error: access.reason });
         }
 
-        const result = await pool.query(`
+        const result = await queryWithRetry(`
             DELETE FROM reactions
             WHERE message_id = $1 AND user_id = $2 AND emoji = $3
-        `, [messageId, req.user.id, emoji]);
+        `, [messageId, req.user.id, emoji], 'DELETE reactions');
 
         if (result.rowCount === 0) {
             return res.status(404).json({ error: 'Реакция не найдена' });
@@ -474,11 +493,11 @@ router.post('/:chatId/read', authMiddleware, async (req, res) => {
             return res.status(403).json({ error: access.reason });
         }
 
-        await pool.query(`
+        await queryWithRetry(`
             UPDATE chat_members
             SET last_read_message_id = $1
             WHERE chat_id = $2 AND user_id = $3
-        `, [messageId, chatId, req.user.id]);
+        `, [messageId, chatId, req.user.id], 'POST read');
 
         const io = req.app.get('io');
         if (io) {

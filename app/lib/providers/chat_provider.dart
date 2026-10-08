@@ -10,6 +10,8 @@
 // 🎯 ЭТАП A: добавлен totalUnreadCount для бейджа на BottomNav
 // 🎯 ЭТАП C.2: закреплённые чаты
 // 🎯 FIX (web upload): sendFile принимает XFile вместо String
+// 🎯 ОПТИМИЗАЦИЯ: кэш сообщений (_messagesCache) + время последней
+//    загрузки — повторное открытие чата мгновенно.
 // =====================================================
 
 import 'dart:async';
@@ -57,6 +59,12 @@ class ChatProvider extends ChangeNotifier {
 
     bool _hasMoreOld = true;
     bool _isLoadingMore = false;
+
+    // 🎯 ОПТИМИЗАЦИЯ: кэш сообщений по chatId
+    // Хранит последние N сообщений + время загрузки.
+    // При повторном открытии чата — показываем сразу, обновляем в фоне.
+    final Map<int, _CachedMessages> _messagesCache = {};
+    static const Duration _cacheTtl = Duration(minutes: 2);
 
     // 🎯 ЭТАП C.2: закреплённые чаты
     static const String _pinnedKey = 'bmschat_pinned_chat_ids';
@@ -113,6 +121,40 @@ class ChatProvider extends ChangeNotifier {
     int getOnlineCountForMembers(List<int> memberIds) {
         if (memberIds.isEmpty) return 0;
         return memberIds.where((id) => _onlineUserIds.contains(id)).length;
+    }
+
+    // =====================================================
+    // 🎯 ОПТИМИЗАЦИЯ: КЭШ СООБЩЕНИЙ
+    // =====================================================
+
+    /// Возвращает кэшированные сообщения для чата (если есть и не протухли).
+    List<Message>? getCachedMessages(int chatId) {
+        final cached = _messagesCache[chatId];
+        if (cached == null) return null;
+        if (DateTime.now().difference(cached.cachedAt) > _cacheTtl) {
+            _messagesCache.remove(chatId);
+            return null;
+        }
+        return cached.messages;
+    }
+
+    /// Сохраняет сообщения в кэш.
+    void _cacheMessages(int chatId, List<Message> messages) {
+        _messagesCache[chatId] = _CachedMessages(
+            messages: List.from(messages),
+            cachedAt: DateTime.now(),
+        );
+    }
+
+    /// Очищает кэш для конкретного чата (например, при новом сообщении).
+    void _invalidateCache(int chatId) {
+        _messagesCache.remove(chatId);
+    }
+
+    /// Очищает весь кэш.
+    void clearCache() {
+        _messagesCache.clear();
+        AppLogger.info('🗑️ Кэш сообщений очищен');
     }
 
     // =====================================================
@@ -381,7 +423,6 @@ class ChatProvider extends ChangeNotifier {
             }
 
             _activeChat = chat;
-            _messages = [];
             _typingUsers.clear();
             _replyToMessage = null;
             _messagesError = null;
@@ -390,6 +431,19 @@ class ChatProvider extends ChangeNotifier {
             _hasMoreOld = true;
             _isLoadingMore = false;
 
+            // 🎯 ОПТИМИЗАЦИЯ: показываем кэш сразу, если есть
+            final cached = getCachedMessages(chatId);
+            if (cached != null && cached.isNotEmpty) {
+                _messages = List.from(cached);
+                AppLogger.info(
+                    '⚡ Мгновенно показаны ${cached.length} сообщений из кэша'
+                );
+                _isLoadingMessages = false;
+            } else {
+                _messages = [];
+                _isLoadingMessages = true;
+            }
+
             final idx = _chats.indexWhere((c) => c.id == chatId);
             if (idx >= 0 && _chats[idx].unreadCount > 0) {
                 _chats[idx] = _chats[idx].copyWith(unreadCount: 0);
@@ -397,6 +451,7 @@ class ChatProvider extends ChangeNotifier {
 
             notifyListeners();
 
+            // 🎯 Загружаем свежие сообщения (в фоне, если есть кэш)
             await _loadMessages(chatId);
         } catch (e) {
             AppLogger.error('Ошибка открытия чата', e);
@@ -562,6 +617,8 @@ class ChatProvider extends ChangeNotifier {
                 await _savePinnedChats();
             }
 
+            _invalidateCache(chatId);
+
             if (_activeChat?.id == chatId) {
                 closeChat();
             }
@@ -710,7 +767,11 @@ class ChatProvider extends ChangeNotifier {
     // =====================================================
 
     Future<void> _loadMessages(int chatId) async {
-        _isLoadingMessages = true;
+        // Если уже есть кэш — не показываем лоадер
+        final hasCache = _messages.isNotEmpty;
+        if (!hasCache) {
+            _isLoadingMessages = true;
+        }
         _messagesError = null;
         _hasMoreOld = true;
         _isLoadingMore = false;
@@ -736,6 +797,9 @@ class ChatProvider extends ChangeNotifier {
                     return msg.copyWith(isRead: isRead);
                 }).toList();
 
+                // 🎯 ОПТИМИЗАЦИЯ: сохраняем в кэш
+                _cacheMessages(chatId, _messages);
+
                 AppLogger.success(
                     'Загружено ${_messages.length} сообщений '
                     '(hasMore: $_hasMoreOld, '
@@ -756,6 +820,7 @@ class ChatProvider extends ChangeNotifier {
 
     Future<void> refreshMessages() async {
         if (_activeChat == null) return;
+        _invalidateCache(_activeChat!.id);
         await _loadMessages(_activeChat!.id);
     }
 
@@ -808,6 +873,11 @@ class ChatProvider extends ChangeNotifier {
                 }
 
                 _messages = [...fresh, ..._messages];
+
+                // 🎯 ОПТИМИЗАЦИЯ: обновляем кэш после подгрузки
+                if (_activeChat != null) {
+                    _cacheMessages(_activeChat!.id, _messages);
+                }
 
                 AppLogger.success(
                     'Подгружено ${fresh.length} старых сообщений '
@@ -1240,6 +1310,8 @@ class ChatProvider extends ChangeNotifier {
                 final exists = _messages.any((m) => m.id == message.id);
                 if (!exists) {
                     _messages.add(message);
+                    // 🎯 ОПТИМИЗАЦИЯ: обновляем кэш
+                    _cacheMessages(chatId, _messages);
                     notifyListeners();
                     markAsRead();
                 }
@@ -1437,6 +1509,7 @@ class ChatProvider extends ChangeNotifier {
         _isSendingMessage = false;
         _hasMoreOld = true;
         _isLoadingMore = false;
+        _messagesCache.clear();
 
         notifyListeners();
     }
@@ -1463,4 +1536,17 @@ class ChatProvider extends ChangeNotifier {
 
         super.dispose();
     }
+}
+
+// =====================================================
+// 🎯 КЭШ СООБЩЕНИЙ — вспомогательный класс
+// =====================================================
+class _CachedMessages {
+    final List<Message> messages;
+    final DateTime cachedAt;
+
+    _CachedMessages({
+        required this.messages,
+        required this.cachedAt,
+    });
 }
