@@ -5,16 +5,11 @@
 // 🎯 isPrivate: приватный ли канал
 // 🎯 isMember: я участник чата?
 // 🎯 emoji: эмодзи-аватар (для каналов и чатов)
+// 🎯 otherUserAvatar / otherUserId: данные собеседника
+//    в личных чатах (для показа аватара в списке)
 //
 // 🔧 v2: _intToBool теперь парсит строки ('true', '1', 't')
-// 🎯 DEBUG: временные print в fromJson (убрать после диагностики)
 // 🎯 ЭТАП C.1: Telegram-формат даты и превью
-//   • lastMessageTime — 14:30 / вчера / Пн / 12 сентября / 12.09.24
-//   • lastMessagePreview — 🖼 Фото / 🎤 Голосовое / 📎 Файл
-// 🎯 ЭМОДЗИ «Потарахтеть»:
-//   • useLogoImage — теперь только для general-чатов БЕЗ emoji.
-//     Если у general-чата задан emoji (например, 🍁) —
-//     он показывается вместо логотипа.
 // =====================================================
 
 class Chat {
@@ -51,16 +46,24 @@ class Chat {
     // 🎯 ШАГ 7: НОВЫЕ ПОЛЯ ДЛЯ КАНАЛОВ
     // =====================================================
 
-    /// 🎯 Приватный ли канал? (только приглашённые видят/читают/пишут)
+    /// 🎯 Приватный ли канал?
     final bool isPrivate;
 
-    /// 🎯 Я участник чата? (для каналов — критично: не-участник видит,
-    /// но не может открыть/писать до «Вступить»)
+    /// 🎯 Я участник чата?
     final bool isMember;
 
-    /// 🎯 Эмодзи-аватар (для каналов и кастомных чатов).
-    /// Если null — для каналов дефолт '📢', для general — логотип.
+    /// 🎯 Эмодзи-аватар (для каналов и кастомных чатов)
     final String? emoji;
+
+    // =====================================================
+    // 🎯 СОБЕСЕДНИК В ЛИЧНОМ ЧАТЕ
+    // =====================================================
+
+    /// 🎯 Аватар собеседника (только для type='private')
+    final String? otherUserAvatar;
+
+    /// 🎯 ID собеседника (только для type='private')
+    final int? otherUserId;
 
     // =====================================================
     // 🏗️ КОНСТРУКТОР
@@ -84,10 +87,11 @@ class Chat {
         this.lastMessageAt,
         this.members = const [],
         this.unreadCount = 0,
-        // 🎯 ШАГ 7:
         this.isPrivate = false,
         this.isMember = false,
         this.emoji,
+        this.otherUserAvatar,
+        this.otherUserId,
     });
 
     // =====================================================
@@ -95,19 +99,6 @@ class Chat {
     // =====================================================
 
     factory Chat.fromJson(Map<String, dynamic> json) {
-        // 🎯 DEBUG: для каналов — посмотреть реальные типы полей
-        if (json['type'] == 'channel') {
-            // ignore: avoid_print
-            print('🔍 Chat.fromJson CHANNEL: '
-                'id=${json['id']}, '
-                'is_member=${json['is_member']} '
-                '(${json['is_member'].runtimeType}), '
-                'is_private=${json['is_private']} '
-                '(${json['is_private'].runtimeType}), '
-                'emoji=${json['emoji']} '
-                '(${json['emoji'].runtimeType})');
-        }
-
         return Chat(
             id: json['id'] as int? ?? 0,
             type: json['type'] as String? ?? 'group',
@@ -130,10 +121,11 @@ class Chat {
             unreadCount: json['unread_count'] as int?
                 ?? json['unreadCount'] as int?
                 ?? 0,
-            // 🎯 ШАГ 7:
             isPrivate: _intToBool(json['is_private']),
             isMember: _intToBool(json['is_member']),
             emoji: _parseEmoji(json['emoji']),
+            otherUserAvatar: json['other_user_avatar'] as String?,
+            otherUserId: json['other_user_id'] as int?,
         );
     }
 
@@ -159,10 +151,11 @@ class Chat {
             'last_message_text': lastMessageText,
             'last_message_at': lastMessageAt?.toIso8601String(),
             'unread_count': unreadCount,
-            // 🎯 ШАГ 7:
             'is_private': isPrivate ? 1 : 0,
             'is_member': isMember ? 1 : 0,
             'emoji': emoji,
+            'other_user_avatar': otherUserAvatar,
+            'other_user_id': otherUserId,
         };
     }
 
@@ -188,10 +181,11 @@ class Chat {
         DateTime? lastMessageAt,
         List<ChatMember>? members,
         int? unreadCount,
-        // 🎯 ШАГ 7:
         bool? isPrivate,
         bool? isMember,
         String? emoji,
+        String? otherUserAvatar,
+        int? otherUserId,
     }) {
         return Chat(
             id: id ?? this.id,
@@ -211,10 +205,11 @@ class Chat {
             lastMessageAt: lastMessageAt ?? this.lastMessageAt,
             members: members ?? this.members,
             unreadCount: unreadCount ?? this.unreadCount,
-            // 🎯 ШАГ 7:
             isPrivate: isPrivate ?? this.isPrivate,
             isMember: isMember ?? this.isMember,
             emoji: emoji ?? this.emoji,
+            otherUserAvatar: otherUserAvatar ?? this.otherUserAvatar,
+            otherUserId: otherUserId ?? this.otherUserId,
         );
     }
 
@@ -241,10 +236,7 @@ class Chat {
     bool get hasEmojiAvatar =>
         emoji != null && emoji!.isNotEmpty;
 
-    /// 🎯 Эмодзи-аватар или дефолт:
-    ///   • Если emoji задано — оно.
-    ///   • Если канал без emoji — '📢'.
-    ///   • Иначе — стандартная иконка типа.
+    /// 🎯 Эмодзи-аватар или дефолт
     String get displayEmoji {
         if (emoji != null && emoji!.isNotEmpty && emoji != '??') {
             return emoji!;
@@ -306,10 +298,7 @@ class Chat {
         }
     }
 
-    /// 🎯 ЭМОДЗИ «Потарахтеть»:
-    /// Логотип показываем только для general-чатов БЕЗ emoji.
-    /// Если у general-чата задан emoji (например, 🍁) —
-    /// вместо логотипа будет эмодзи.
+    /// 🎯 Логотип показываем только для general-чатов БЕЗ emoji
     bool get useLogoImage =>
         type == 'general' && (emoji == null || emoji!.isEmpty);
 
@@ -317,7 +306,7 @@ class Chat {
     // 🎯 ЭТАП C.1: TELEGRAM-ФОРМАТ ПРЕВЬЮ
     // =====================================================
 
-    /// 🎯 Превью последнего сообщения с префиксами типа.
+    /// 🎯 Превью последнего сообщения с префиксами типа
     String get lastMessagePreview {
         if (lastMessageText == null || lastMessageText!.isEmpty) {
             return 'Нет сообщений';
@@ -345,12 +334,6 @@ class Chat {
     // 🎯 ЭТАП C.1: TELEGRAM-ФОРМАТ ДАТЫ
     // =====================================================
 
-    /// 🎯 Время последнего сообщения в Telegram-формате:
-    ///   • Сегодня      → `14:30`
-    ///   • Вчера        → `вчера`
-    ///   • Эта неделя   → `Пн`, `Вт`, `Ср`...
-    ///   • Этот год     → `12.09`
-    ///   • Старше года  → `12.09.24`
     String get lastMessageTime {
         if (lastMessageAt == null) return '';
 
@@ -375,7 +358,7 @@ class Chat {
             return 'вчера';
         }
 
-        // Эта неделя (2-6 дней назад) → Пн, Вт, ...
+        // Эта неделя → Пн, Вт, ...
         final diffDays = today.difference(messageDay).inDays;
         if (diffDays >= 2 && diffDays < 7) {
             const weekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
@@ -410,7 +393,7 @@ class Chat {
     // 🛠️ СТАТИЧЕСКИЕ МЕТОДЫ
     // =====================================================
 
-    /// 🎯 Парсинг bool: поддерживает bool, int (0/1), String ('true'/'1'/'t').
+    /// 🎯 Парсинг bool: поддерживает bool, int (0/1), String ('true'/'1'/'t')
     static bool _intToBool(dynamic value) {
         if (value == null) return false;
         if (value is bool) return value;
@@ -429,7 +412,7 @@ class Chat {
         return null;
     }
 
-    /// 🎯 Парсинг эмодзи: если null, пусто или '??' — возвращаем null.
+    /// 🎯 Парсинг эмодзи: если null, пусто или '??' — возвращаем null
     static String? _parseEmoji(dynamic value) {
         if (value == null) return null;
         final str = value.toString().trim();
@@ -446,7 +429,8 @@ class Chat {
     String toString() {
         return 'Chat(id: $id, type: $type, title: $title, '
             'members: $membersCount, unread: $unreadCount, '
-            'isPrivate: $isPrivate, isMember: $isMember, emoji: $emoji)';
+            'isPrivate: $isPrivate, isMember: $isMember, emoji: $emoji, '
+            'otherUserId: $otherUserId)';
     }
 
     @override
@@ -458,12 +442,14 @@ class Chat {
             other.unreadCount == unreadCount &&
             other.isPrivate == isPrivate &&
             other.isMember == isMember &&
-            other.emoji == emoji;
+            other.emoji == emoji &&
+            other.otherUserAvatar == otherUserAvatar;
     }
 
     @override
     int get hashCode => Object.hash(
         id, lastMessageId, unreadCount, isPrivate, isMember, emoji,
+        otherUserAvatar,
     );
 }
 

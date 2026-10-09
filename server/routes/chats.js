@@ -6,7 +6,7 @@
 //   🎯 2026-09-19 (Шаг 5): POST /api/chats — isPrivate, emoji, фильтр
 //   🎯 2026-09-19 (Шаг 6): PUT/DELETE/:id, join, members/bulk
 //   🎯 2026-09-19: console.log для диагностики в stdout (Onreza показывает)
-//                  + валидация chatId во всех :id роутах
+//   🎯 2026-10-09: other_user_avatar, other_user_id для личных чатов
 // =====================================================
 
 const express = require('express');
@@ -50,7 +50,29 @@ router.get('/', authMiddleware, async (req, res) => {
                         LIMIT 1
                     )
                     ELSE c.name
-                END as display_name
+                END as display_name,
+                CASE 
+                    WHEN c.type = 'private' THEN (
+                        SELECT u.avatar 
+                        FROM chat_members cm2
+                        INNER JOIN users u ON u.id = cm2.user_id
+                        WHERE cm2.chat_id = c.id 
+                          AND cm2.user_id != $1
+                        LIMIT 1
+                    )
+                    ELSE NULL
+                END as other_user_avatar,
+                CASE 
+                    WHEN c.type = 'private' THEN (
+                        SELECT u.id 
+                        FROM chat_members cm2
+                        INNER JOIN users u ON u.id = cm2.user_id
+                        WHERE cm2.chat_id = c.id 
+                          AND cm2.user_id != $1
+                        LIMIT 1
+                    )
+                    ELSE NULL
+                END as other_user_id
             FROM chats c
             LEFT JOIN chat_members cm ON cm.chat_id = c.id AND cm.user_id = $1
             WHERE c.is_active = TRUE
@@ -434,10 +456,8 @@ router.post('/:id/members/bulk', authMiddleware, async (req, res) => {
 // =====================================================
 // ✏️ PUT /api/chats/:id — редактирование канала
 // =====================================================
-// 🎯 ДИАГНОСТИКА: console.log в stdout (Onreza показывает)
 router.put('/:id', authMiddleware, async (req, res) => {
     try {
-        // 🎯 Валидация chatId
         const chatId = parseInt(req.params.id, 10);
         if (!Number.isInteger(chatId) || chatId <= 0) {
             console.log('⚠️ PUT /api/chats: некорректный chatId:', req.params.id);
@@ -450,7 +470,6 @@ router.put('/:id', authMiddleware, async (req, res) => {
 
         const { name, description, emoji, isPrivate } = req.body;
 
-        // 1. Проверка прав
         const canManage = await canManageChannel(chatId, req.user.id);
         console.log('  canManage:', canManage);
 
@@ -460,7 +479,6 @@ router.put('/:id', authMiddleware, async (req, res) => {
             });
         }
 
-        // 2. Проверка типа
         const chatCheck = await pool.query(
             'SELECT type FROM chats WHERE id = $1',
             [chatId]
@@ -472,7 +490,6 @@ router.put('/:id', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'Редактирование доступно только для каналов' });
         }
 
-        // 3. Валидация
         if (name !== undefined) {
             if (!name || name.trim().length < 2) {
                 return res.status(400).json({ error: 'Название минимум 2 символа' });
@@ -482,7 +499,6 @@ router.put('/:id', authMiddleware, async (req, res) => {
             }
         }
 
-        // 4. Собираем UPDATE динамически
         const updates = [];
         const values = [];
         let idx = 1;
@@ -528,7 +544,6 @@ router.put('/:id', authMiddleware, async (req, res) => {
 
         res.json({ message: 'Канал обновлён' });
     } catch (error) {
-        // 🎯 ДИАГНОСТИКА в stdout — Onreza покажет в runtime-логах
         console.log('🔴 PUT /api/chats ERROR');
         console.log('  chatId:', req.params.id);
         console.log('  userId:', req.user?.id);
@@ -546,7 +561,6 @@ router.put('/:id', authMiddleware, async (req, res) => {
 // =====================================================
 // 🗑️ DELETE /api/chats/:id — удаление канала (soft)
 // =====================================================
-// 🎯 ДИАГНОСТИКА: console.log в stdout
 router.delete('/:id', authMiddleware, async (req, res) => {
     try {
         const chatId = parseInt(req.params.id, 10);
@@ -590,7 +604,6 @@ router.delete('/:id', authMiddleware, async (req, res) => {
 
         res.json({ message: 'Канал удалён' });
     } catch (error) {
-        // 🎯 ДИАГНОСТИКА в stdout
         console.log('🔴 DELETE /api/chats ERROR');
         console.log('  chatId:', req.params.id);
         console.log('  userId:', req.user?.id);

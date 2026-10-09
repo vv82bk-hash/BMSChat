@@ -2,11 +2,13 @@
 // 👤 BMSChat — ЭЛЕМЕНТ СПИСКА ПОЛЬЗОВАТЕЛЕЙ
 // =====================================================
 // 🎯 ЭТАП D.1: кэш аватаров через CachedNetworkImageProvider
+// 🎯 FIX: аватар через Constants.getFullFileUrl (полный URL)
 // =====================================================
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
+import '../config/constants.dart';
 import '../models/user.dart';
 import '../themes/rasta_theme.dart';
 
@@ -80,16 +82,21 @@ class UserListTile extends StatelessWidget {
     // 🖼️ АВАТАР
     // =====================================================
     Widget _buildAvatar() {
+        final hasAvatar = user.avatar != null && user.avatar!.isNotEmpty;
+        final avatarUrl = hasAvatar
+            ? Constants.getFullFileUrl(user.avatar)
+            : null;
+
         return Stack(
             children: [
                 CircleAvatar(
                     radius: 24,
                     backgroundColor: RastaTheme.surfaceSecondary,
-                    // 🎯 ЭТАП D.1: кэш аватара на диск
-                    backgroundImage: user.avatar != null
-                        ? CachedNetworkImageProvider(user.avatar!)
+                    // 🎯 ЭТАП D.1: кэш аватара на диск (с полным URL)
+                    backgroundImage: avatarUrl != null
+                        ? CachedNetworkImageProvider(avatarUrl)
                         : null,
-                    child: user.avatar == null
+                    child: !hasAvatar
                         ? Text(
                             user.initials,
                             style: const TextStyle(

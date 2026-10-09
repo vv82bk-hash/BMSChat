@@ -10,6 +10,7 @@
 // 🎯 ГОЛОСОВЫЕ: плеер с Play/Pause, таймер, простая волна
 // 🎯 ПРОСМОТР ФОТО: InstaImageViewer (зум + свайп вниз)
 // 🎯 ПРОФИЛЬ: тап по имени отправителя → onSenderTap
+// 🎯 АВАТАР: мини-аватар рядом с именем отправителя
 // =====================================================
 
 import 'dart:ui' as ui;
@@ -105,6 +106,7 @@ class MessageBubble extends StatelessWidget {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
+                                    // 🎯 АВАТАР + ИМЯ
                                     if (!isOwn &&
                                         message.senderName != null &&
                                         !message.isImageMessage)
@@ -114,15 +116,27 @@ class MessageBubble extends StatelessWidget {
                                             ),
                                             child: GestureDetector(
                                                 onTap: onSenderTap,
-                                                child: Text(
-                                                    message.senderName!,
-                                                    style: const TextStyle(
-                                                        fontSize: 12,
-                                                        fontWeight:
-                                                            FontWeight.w700,
-                                                        color: RastaTheme
-                                                            .rastaYellow,
-                                                    ),
+                                                child: Row(
+                                                    mainAxisSize:
+                                                        MainAxisSize.min,
+                                                    children: [
+                                                        _buildSenderAvatar(),
+                                                        const SizedBox(
+                                                            width: 6,
+                                                        ),
+                                                        Text(
+                                                            message.senderName!,
+                                                            style:
+                                                                const TextStyle(
+                                                                fontSize: 12,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w700,
+                                                                color: RastaTheme
+                                                                    .rastaYellow,
+                                                            ),
+                                                        ),
+                                                    ],
                                                 ),
                                             ),
                                         ),
@@ -281,6 +295,82 @@ class MessageBubble extends StatelessWidget {
                                 ],
                             ),
                         ),
+                    ),
+                ),
+            ),
+        );
+    }
+
+    // =====================================================
+    // 👤 МИНИ-АВАТАР ОТПРАВИТЕЛЯ
+    // =====================================================
+    Widget _buildSenderAvatar() {
+        final hasAvatar =
+            message.senderAvatar != null && message.senderAvatar!.isNotEmpty;
+        final avatarUrl = hasAvatar
+            ? Constants.getFullFileUrl(message.senderAvatar)
+            : null;
+
+        // Инициал из имени отправителя (первая буква)
+        final initial = (message.senderName ?? '?')
+            .trim()
+            .substring(0, 1)
+            .toUpperCase();
+
+        return Container(
+            width: 20,
+            height: 20,
+            decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                        RastaTheme.rastaRed,
+                        RastaTheme.rastaYellow,
+                    ],
+                ),
+            ),
+            child: ClipOval(
+                child: hasAvatar
+                    ? CachedNetworkImage(
+                        imageUrl: avatarUrl!,
+                        width: 20,
+                        height: 20,
+                        fit: BoxFit.cover,
+                        placeholder: (context, url) => _buildAvatarFallback(
+                            initial,
+                        ),
+                        errorWidget: (context, url, error) =>
+                            _buildAvatarFallback(initial),
+                    )
+                    : _buildAvatarFallback(initial),
+            ),
+        );
+    }
+
+    Widget _buildAvatarFallback(String initial) {
+        return Container(
+            width: 20,
+            height: 20,
+            decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                        RastaTheme.rastaRed,
+                        RastaTheme.rastaYellow,
+                    ],
+                ),
+            ),
+            child: Center(
+                child: Text(
+                    initial,
+                    style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.black,
                     ),
                 ),
             ),

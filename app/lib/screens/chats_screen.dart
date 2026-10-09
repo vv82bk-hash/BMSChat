@@ -7,20 +7,16 @@
 // 🎯 ЭТАП C.3: Telegram-стиль списка
 // 🎯 ЭТАП C.4: Search bar + секция «📌 Закреплённые»
 // 🎯 ЭТАП C.5: долгий тап → меню + свайп влево → удалить
-// 🎯 ЛОГОТИП В APPBAR: вместо ⚔️ — иконка приложения, ✌️ убран
-// 🎯 ЭМОДЗИ «Потарахтеть»:
-//   • _buildChatIcon использует displayEmoji для ВСЕХ чатов —
-//     если emoji задано (например, 🍁), оно и показывается.
-// 🎯 FIX (дубли + анимация): защита от двойного нажатия,
-//    CupertinoPageRoute (справа), openChat перенесён в ChatScreen.
-// 🎯 ОПТИМИЗАЦИЯ: Selector вместо Consumer + ListView.builder
-//    для регулярных чатов + CustomScrollView для секций.
+// 🎯 ОПТИМИЗАЦИЯ: Selector вместо Consumer
+// 🎯 АВАТАРЫ: показ аватара собеседника в личных чатах
 // =====================================================
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../config/constants.dart';
 import '../models/chat.dart';
 import '../providers/auth_provider.dart';
 import '../providers/chat_provider.dart';
@@ -106,8 +102,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
 
     // ============================================
     // 📂 ОТКРЫТИЕ ЧАТА
-    // 🎯 FIX: защита от двойного нажатия + CupertinoPageRoute
-    // 🎯 openChat перенесён в ChatScreen.initState
     // ============================================
     Future<void> _openChat(Chat chat) async {
         if (_isOpeningChat) return;
@@ -148,7 +142,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
                 _toggleSearch();
             }
 
-            // 🎯 openChat вызовется в ChatScreen.initState
             Navigator.of(context).push(
                 CupertinoPageRoute(
                     settings: RouteSettings(name: 'chat_${chat.id}'),
@@ -452,7 +445,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
                     ? _buildSearchField()
                     : Row(
                         children: [
-                            // 🎯 Логотип приложения вместо ⚔️
                             Container(
                                 width: 32,
                                 height: 32,
@@ -515,8 +507,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
                         _buildCreateChannelButton(),
                 ],
             ),
-            // 🎯 ОПТИМИЗАЦИЯ: Selector вместо Consumer
-            // Перестраивает виджет ТОЛЬКО при изменении списка chats
             body: Selector<ChatProvider, _ChatsState>(
                 selector: (_, provider) => _ChatsState(
                     chats: provider.chats,
@@ -633,8 +623,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
 
     // =====================================================
     // 🎯 ЭТАП C.4: СПИСОК ЧАТОВ (с секциями)
-    // 🎯 ОПТИМИЗАЦИЯ: ListView.builder для регулярных чатов +
-    //    CustomScrollView для секций (pinned + regular)
     // =====================================================
     Widget _buildChatsList(List<Chat> chats) {
         if (_isSearching && _searchQuery.isNotEmpty) {
@@ -649,7 +637,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
             return _buildEmptyState();
         }
 
-        // 🎯 Если только регулярные — используем ListView.builder (быстрее)
         if (pinned.isEmpty) {
             return ListView.builder(
                 padding: const EdgeInsets.symmetric(vertical: 4),
@@ -660,10 +647,8 @@ class _ChatsScreenState extends State<ChatsScreen> {
             );
         }
 
-        // 🎯 Если есть закреплённые — используем CustomScrollView
         return CustomScrollView(
             slivers: [
-                // 📌 Секция закреплённых
                 SliverToBoxAdapter(
                     child: _buildSectionHeader('📌 Закреплённые'),
                 ),
@@ -676,7 +661,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
                     ),
                 ),
                 const SliverToBoxAdapter(child: SizedBox(height: 6)),
-                // 💬 Секция обычных
                 if (regular.isNotEmpty) ...[
                     SliverToBoxAdapter(
                         child: _buildSectionHeader('Чаты'),
@@ -892,33 +876,9 @@ class _ChatsScreenState extends State<ChatsScreen> {
                                                     : null,
                                             ),
                                             child: Center(
-                                                child: Container(
-                                                    width: 54,
-                                                    height: 54,
-                                                    decoration: BoxDecoration(
-                                                        shape: BoxShape.circle,
-                                                        gradient:
-                                                            _getChatGradient(
-                                                                chat.type),
-                                                        boxShadow: [
-                                                            BoxShadow(
-                                                                color: Colors
-                                                                    .black
-                                                                    .withValues(
-                                                                        alpha:
-                                                                            0.25),
-                                                                blurRadius: 6,
-                                                                offset:
-                                                                    const Offset(
-                                                                        0, 2),
-                                                            ),
-                                                        ],
-                                                    ),
-                                                    child: Center(
-                                                        child:
-                                                            _buildChatIcon(
-                                                                chat),
-                                                    ),
+                                                child: _buildChatAvatar(
+                                                    chat,
+                                                    size: 54,
                                                 ),
                                             ),
                                         ),
@@ -1190,13 +1150,74 @@ class _ChatsScreenState extends State<ChatsScreen> {
         );
     }
 
-    // ============================================
-    // 🎨 ИКОНКА ЧАТА
-    // ============================================
-    Widget _buildChatIcon(Chat chat) {
-        return Text(
-            chat.displayEmoji,
-            style: const TextStyle(fontSize: 26),
+    // =====================================================
+    // 🎨 АВАТАР ЧАТА
+    // =====================================================
+    // 🎯 Личный чат + есть аватар собеседника → CachedNetworkImage
+    // 🎯 Иначе → градиент + эмодзи (как было)
+    // =====================================================
+    Widget _buildChatAvatar(Chat chat, {required double size}) {
+        // Личный чат с аватаром собеседника
+        if (chat.isPrivateChat &&
+            chat.otherUserAvatar != null &&
+            chat.otherUserAvatar!.isNotEmpty) {
+            final url = Constants.getFullFileUrl(chat.otherUserAvatar);
+
+            return Container(
+                width: size,
+                height: size,
+                decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                        BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.25),
+                            blurRadius: 6,
+                            offset: const Offset(0, 2),
+                        ),
+                    ],
+                ),
+                child: ClipOval(
+                    child: CachedNetworkImage(
+                        imageUrl: url,
+                        width: size,
+                        height: size,
+                        fit: BoxFit.cover,
+                        placeholder: (context, url) => _buildChatAvatarFallback(
+                            chat,
+                            size,
+                        ),
+                        errorWidget: (context, url, error) =>
+                            _buildChatAvatarFallback(chat, size),
+                    ),
+                ),
+            );
+        }
+
+        // Все остальные чаты — градиент + эмодзи
+        return _buildChatAvatarFallback(chat, size);
+    }
+
+    Widget _buildChatAvatarFallback(Chat chat, double size) {
+        return Container(
+            width: size,
+            height: size,
+            decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: _getChatGradient(chat.type),
+                boxShadow: [
+                    BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.25),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                    ),
+                ],
+            ),
+            child: Center(
+                child: Text(
+                    chat.displayEmoji,
+                    style: const TextStyle(fontSize: 26),
+                ),
+            ),
         );
     }
 
@@ -1397,6 +1418,7 @@ class _ChatsState {
             if (a[i].id != b[i].id) return false;
             if (a[i].unreadCount != b[i].unreadCount) return false;
             if (a[i].lastMessageId != b[i].lastMessageId) return false;
+            if (a[i].otherUserAvatar != b[i].otherUserAvatar) return false;
         }
         return true;
     }
