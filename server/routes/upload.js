@@ -4,6 +4,8 @@
 // POST /api/upload
 // Файл сохраняется прямо в БД (колонка file_data).
 // 🎤 ГОЛОСОВЫЕ: вычисляем duration через music-metadata
+// 📄 ДОКУМЕНТЫ: PDF, DOC/DOCX, XLS/XLSX, PPT/PPTX,
+//    TXT, CSV, ZIP/RAR/7Z, APK (безопасный список)
 // =====================================================
 
 const express = require('express');
@@ -23,20 +25,57 @@ const logger = require('../utils/logger');
 const storage = multer.memoryStorage();
 
 // =====================================================
-// 🛡️ ФИЛЬТР ФАЙЛОВ
+// 🛡️ ФИЛЬТР ФАЙЛОВ — БЕЗОПАСНЫЙ СПИСОК
 // =====================================================
 const ALLOWED_MIME_TYPES = [
+    // ─── Изображения ───
     'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+
+    // ─── Аудио (голосовые) ───
     'audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/webm',
     'audio/ogg', 'audio/aac', 'audio/x-m4a',
+
+    // ─── Документы ───
     'application/pdf',
+    'application/msword',                                                   // .doc
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+    'application/vnd.ms-excel',                                             // .xls
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',    // .xlsx
+    'application/vnd.ms-powerpoint',                                        // .ppt
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation', // .pptx
+    'text/plain',                                                           // .txt
+    'text/csv',                                                             // .csv
+
+    // ─── Архивы ───
+    'application/zip',
+    'application/x-zip-compressed',
+    'application/vnd.rar',
+    'application/x-rar-compressed',
+    'application/x-7z-compressed',
+
+    // ─── Мобильные пакеты ───
+    'application/vnd.android.package-archive',                              // .apk
+
+    // ─── Fallback: браузеры часто не знают MIME ───
     'application/octet-stream',
 ];
 
 const ALLOWED_EXTENSIONS = [
+    // Изображения
     '.jpg', '.jpeg', '.png', '.gif', '.webp',
+
+    // Аудио
     '.mp3', '.m4a', '.wav', '.webm', '.ogg', '.aac',
-    '.pdf',
+
+    // Документы
+    '.pdf', '.doc', '.docx', '.xls', '.xlsx',
+    '.ppt', '.pptx', '.txt', '.csv',
+
+    // Архивы
+    '.zip', '.rar', '.7z',
+
+    // Мобильные
+    '.apk',
 ];
 
 const fileFilter = (_req, file, cb) => {
@@ -44,6 +83,8 @@ const fileFilter = (_req, file, cb) => {
         return cb(null, true);
     }
 
+    // Fallback: некоторые клиенты/ОС отдают generic MIME.
+    // Проверяем по расширению.
     if (file.mimetype === 'application/octet-stream') {
         const ext = path.extname(file.originalname).toLowerCase();
         if (ALLOWED_EXTENSIONS.includes(ext)) {
@@ -110,19 +151,25 @@ router.post('/', authMiddleware, (req, res) => {
             // Определяем тип
             // ─────────────────────────────────────────
             let fileType = req.body.type || 'file';
+            const ext = path.extname(req.file.originalname).toLowerCase();
+
             if (req.file.mimetype.startsWith('image/')) {
                 fileType = 'image';
             } else if (req.file.mimetype.startsWith('audio/')) {
                 fileType = 'voice';
             } else if (req.file.mimetype === 'application/octet-stream') {
-                const ext = path.extname(req.file.originalname).toLowerCase();
+                // Fallback: угадываем по расширению
                 if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
                     fileType = 'image';
-                } else if (['.mp3', '.m4a', '.wav', '.webm', '.ogg', '.aac'].includes(ext)) {
+                } else if (
+                    ['.mp3', '.m4a', '.wav', '.webm', '.ogg', '.aac'].includes(ext)
+                ) {
                     fileType = 'voice';
                 } else {
                     fileType = 'file';
                 }
+            } else {
+                fileType = 'file';
             }
 
             // ─────────────────────────────────────────
@@ -181,7 +228,7 @@ router.post('/', authMiddleware, (req, res) => {
                 file_size: saved.file_size,
                 mime_type: saved.mime_type,
                 file_type: saved.file_type,
-                duration: saved.duration,  // 🎤 в секундах
+                duration: saved.duration,
             });
         } catch (error) {
             logger.error('Ошибка обработки загрузки', error);

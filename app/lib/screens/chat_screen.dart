@@ -24,11 +24,13 @@
 // 🎯 CLEAR: пункт «Очистить историю» → подтверждение + вызов
 // 🎯 КЭШ (Уровень 1): RefreshIndicator (pull-to-refresh) для
 //    принудительного обновления сообщений с сервера
+// 🎯 ДОКУМЕНТЫ (Подэтап 1): выбор и отправка файлов через file_picker
 // =====================================================
 
 import 'dart:async';
 
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -49,6 +51,16 @@ import 'chat_info_screen.dart';
 import 'group_settings_screen.dart';
 import 'user_profile_screen.dart';
 import 'users_screen.dart';
+
+// =====================================================
+// 🎯 ВЫБОР ИСТОЧНИКА ФАЙЛА
+// =====================================================
+// Используется для showModalBottomSheet в _pickFile.
+enum _FileAction {
+    gallery,
+    camera,
+    document,
+}
 
 class ChatScreen extends StatefulWidget {
     final int chatId;
@@ -410,7 +422,7 @@ class _ChatScreenState extends State<ChatScreen> {
     Future<void> _pickFile() async {
         _showInputPanel();
 
-        final source = await showModalBottomSheet<ImageSource>(
+        final action = await showModalBottomSheet<_FileAction>(
             context: context,
             backgroundColor: RastaTheme.surface,
             shape: const RoundedRectangleBorder(
@@ -454,7 +466,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 ),
                             ),
                             onTap: () =>
-                                Navigator.pop(context, ImageSource.gallery),
+                                Navigator.pop(context, _FileAction.gallery),
                         ),
                         ListTile(
                             leading: const Icon(
@@ -470,7 +482,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 ),
                             ),
                             onTap: () =>
-                                Navigator.pop(context, ImageSource.camera),
+                                Navigator.pop(context, _FileAction.camera),
                         ),
                         ListTile(
                             leading: const Icon(
@@ -485,10 +497,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                     fontSize: 16,
                                 ),
                             ),
-                            onTap: () {
-                                Navigator.pop(context);
-                                _showInfo('Отправка документов — скоро');
-                            },
+                            onTap: () =>
+                                Navigator.pop(context, _FileAction.document),
                         ),
                         const SizedBox(height: 8),
                     ],
@@ -496,7 +506,18 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
         );
 
-        if (source == null || !mounted) return;
+        if (action == null || !mounted) return;
+
+        // 🎯 Документ — отдельный поток через file_picker
+        if (action == _FileAction.document) {
+            await _pickDocument();
+            return;
+        }
+
+        // 🎯 Фото — через image_picker
+        final ImageSource source = action == _FileAction.gallery
+            ? ImageSource.gallery
+            : ImageSource.camera;
 
         try {
             final XFile? image = await _imagePicker.pickImage(
@@ -525,6 +546,72 @@ class _ChatScreenState extends State<ChatScreen> {
         } catch (e) {
             if (!mounted) return;
             _showError('Ошибка: $e');
+        }
+    }
+
+    // ============================================
+    // 📄 ВЫБОР И ОТПРАВКА ДОКУМЕНТА
+    // ============================================
+    // Через file_picker — поддерживает PDF, DOC/DOCX, XLS/XLSX,
+    // PPT/PPTX, TXT, CSV, ZIP/RAR/7Z, APK.
+    // Ограничение размера проверяется на сервере (10 МБ).
+    // ============================================
+    Future<void> _pickDocument() async {
+        try {
+            final result = await FilePicker.platform.pickFiles(
+                type: FileType.any,
+                allowMultiple: false,
+                withData: true, // важно для web
+            );
+
+            if (result == null || result.files.isEmpty) return;
+            if (!mounted) return;
+
+            final picked = result.files.single;
+
+            // На мобильных path != null, на web — bytes
+            final path = picked.path;
+            final bytes = picked.bytes;
+
+            if (path == null && bytes == null) {
+                _showError('Не удалось прочитать файл');
+                return;
+            }
+
+            // Предварительная проверка размера (10 МБ)
+            const maxBytes = 10 * 1024 * 1024;
+            if (picked.size > maxBytes) {
+                _showError('Файл слишком большой (максимум 10 МБ)');
+                return;
+            }
+
+            _showInfo('Загрузка файла...');
+
+            // Формируем XFile — на web через fromBytes, иначе через path
+            final XFile xfile;
+            if (path != null) {
+                xfile = XFile(path, name: picked.name);
+            } else {
+                xfile = XFile.fromData(
+                    bytes!,
+                    name: picked.name,
+                );
+            }
+
+            final chat = Provider.of<ChatProvider>(context, listen: false);
+            final success = await chat.sendFile(xfile, 'file');
+
+            if (!mounted) return;
+
+            if (!success) {
+                _showError('Не удалось отправить файл');
+            } else {
+                _showInfo('Файл отправлен');
+                _scrollToBottom();
+            }
+        } catch (e) {
+            if (!mounted) return;
+            _showError('Ошибка выбора файла: $e');
         }
     }
 
