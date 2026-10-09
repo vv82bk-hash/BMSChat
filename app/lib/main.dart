@@ -2,6 +2,7 @@
 // 🎯 BMSChat — ТОЧКА ВХОДА
 // =====================================================
 
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -17,11 +18,20 @@ import 'providers/auth_provider.dart';
 import 'providers/chat_provider.dart';
 import 'providers/users_provider.dart';
 
+// 🎯 Уведомления (FCM + локальные)
+import 'services/notification_service.dart';
+
 // =====================================================
 // 🚀 ТОЧКА ВХОДА
 // =====================================================
 void main() async {
     WidgetsFlutterBinding.ensureInitialized();
+
+    // 🎯 Firebase — обязательно ДО NotificationService
+    await Firebase.initializeApp();
+
+    // 🎯 Инициализация уведомлений (FCM + локальные)
+    await NotificationService.init();
 
     SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
@@ -63,7 +73,7 @@ class BMSChatApp extends StatelessWidget {
                     },
                 ),
 
-                // 👥 Пользователи (НОВОЕ)
+                // 👥 Пользователи
                 ChangeNotifierProvider<UsersProvider>(
                     create: (_) => UsersProvider(),
                 ),

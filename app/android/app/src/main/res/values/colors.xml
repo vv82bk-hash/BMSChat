@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- 🎯 Цвет иконки уведомлений: Rasta Yellow #FED100 -->
+    <color name="notification_color">#FED100</color>
+
+    <!-- 🎯 Фон адаптивной иконки приложения (из pubspec.yaml) -->
     <color name="ic_launcher_background">#0A0A0A</color>
 </resources>

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "651548684403",
+    "project_id": "bms-chat-7d6f4",
+    "storage_bucket": "bms-chat-7d6f4.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:651548684403:android:c53f429e557b543dacba06",
+        "android_client_info": {
+          "package_name": "com.bmschat.bmschat"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCSEKCe0fZZPR31ZzEhTDSoApVsFQNLEFI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
