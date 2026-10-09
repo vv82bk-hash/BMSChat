@@ -7,12 +7,14 @@
 //   • Тап на цитату → onReplyTap (скролл к оригиналу)
 // 🎯 ЭТАП D.1: CachedNetworkImage для картинок-вложений
 // 🎯 ЭТАП D.2: RepaintBoundary для изоляции перерисовки
+// 🎯 ГОЛОСОВЫЕ: плеер с Play/Pause, таймер, простая волна
 // =====================================================
 
 import 'dart:ui' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:just_audio/just_audio.dart';
 
 import '../config/constants.dart';
 import '../models/message.dart';
@@ -41,15 +43,12 @@ class MessageBubble extends StatelessWidget {
     @override
     Widget build(BuildContext context) {
         // 🎯 ЭТАП D.2: изолируем перерисовку каждого пузыря.
-        // При скролле Flutter не перерисовывает соседние пузыри,
-        // если меняется только этот.
         return RepaintBoundary(
             child: Dismissible(
                 key: ValueKey('msg_${message.id}'),
                 direction: DismissDirection.endToStart,
                 background: _buildSwipeBackground(),
                 confirmDismiss: (direction) async {
-                    // 🎯 Не удаляем — только вызываем callback.
                     onReply?.call();
                     return false;
                 },
@@ -135,8 +134,11 @@ class MessageBubble extends StatelessWidget {
                                             child: _buildReplyQuote(),
                                         ),
 
+                                    // 🎯 РЕНДЕР ТЕЛА СООБЩЕНИЯ
                                     if (message.isImageMessage)
                                         _buildImage(message)
+                                    else if (message.isVoiceMessage)
+                                        _buildVoice(message, isOwn)
                                     else if (message.isFileMessage)
                                         _buildFile(message, isOwn)
                                     else
@@ -397,6 +399,18 @@ class MessageBubble extends StatelessWidget {
     }
 
     // =====================================================
+    // 🎤 ГОЛОСОВОЕ
+    // =====================================================
+    Widget _buildVoice(Message message, bool isOwn) {
+        final url = Constants.getFullFileUrl(message.filePath!);
+
+        return _VoiceMessageWidget(
+            url: url,
+            isOwn: isOwn,
+        );
+    }
+
+    // =====================================================
     // 📄 ФАЙЛ
     // =====================================================
     Widget _buildFile(Message message, bool isOwn) {
@@ -453,8 +467,6 @@ class MessageBubble extends StatelessWidget {
 // =====================================================
 // 📷 ПРОПОРЦИОНАЛЬНАЯ КАРТИНКА
 // =====================================================
-// 🎯 ЭТАП D.1: CachedNetworkImage вместо Image.network
-// =====================================================
 
 class _ProportionalImage extends StatefulWidget {
     final String url;
@@ -494,7 +506,6 @@ class _ProportionalImageState extends State<_ProportionalImage> {
     }
 
     void _resolveImage() {
-        // 🎯 ЭТАП D.1: используем кэш-провайдер для разрешения размеров
         final ImageProvider provider =
             CachedNetworkImageProvider(widget.url);
         final ImageStream stream = provider.resolve(ImageConfiguration.empty);
@@ -549,7 +560,6 @@ class _ProportionalImageState extends State<_ProportionalImage> {
             return _buildLoading();
         }
 
-        // 🎯 ЭТАП D.1: CachedNetworkImage вместо Image.network
         return CachedNetworkImage(
             imageUrl: widget.url,
             width: _displayWidth,
@@ -608,5 +618,241 @@ class _ProportionalImageState extends State<_ProportionalImage> {
                 ),
             ),
         );
+    }
+}
+
+// =====================================================
+// 🎤 ВИДЖЕТ ГОЛОСОВОГО СООБЩЕНИЯ
+// =====================================================
+// • Кнопка Play/Pause
+// • Таймер: текущая позиция / общая длительность
+// • Простая волна (фиксированной формы)
+// =====================================================
+
+class _VoiceMessageWidget extends StatefulWidget {
+    final String url;
+    final bool isOwn;
+
+    const _VoiceMessageWidget({
+        required this.url,
+        required this.isOwn,
+    });
+
+    @override
+    State<_VoiceMessageWidget> createState() => _VoiceMessageWidgetState();
+}
+
+class _VoiceMessageWidgetState extends State<_VoiceMessageWidget> {
+    final AudioPlayer _player = AudioPlayer();
+
+    bool _isPlaying = false;
+    bool _isLoading = true;
+    bool _hasError = false;
+    Duration _position = Duration.zero;
+    Duration _duration = Duration.zero;
+
+    @override
+    void initState() {
+        super.initState();
+        _initPlayer();
+    }
+
+    Future<void> _initPlayer() async {
+        try {
+            final dur = await _player.setUrl(widget.url);
+            if (!mounted) return;
+            setState(() {
+                _duration = dur ?? Duration.zero;
+                _isLoading = false;
+            });
+        } catch (e) {
+            if (!mounted) return;
+            setState(() {
+                _hasError = true;
+                _isLoading = false;
+            });
+        }
+
+        _player.playerStateStream.listen((state) {
+            if (!mounted) return;
+            setState(() {
+                _isPlaying = state.playing &&
+                    state.processingState != ProcessingState.completed;
+            });
+
+            if (state.processingState == ProcessingState.completed) {
+                _player.seek(Duration.zero);
+                _player.pause();
+            }
+        });
+
+        _player.positionStream.listen((pos) {
+            if (!mounted) return;
+            setState(() => _position = pos);
+        });
+    }
+
+    @override
+    void dispose() {
+        _player.dispose();
+        super.dispose();
+    }
+
+    Future<void> _togglePlay() async {
+        if (_hasError) return;
+        if (_isPlaying) {
+            await _player.pause();
+        } else {
+            await _player.play();
+        }
+    }
+
+    String _formatDuration(Duration d) {
+        final m = d.inMinutes;
+        final s = d.inSeconds % 60;
+        return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+    }
+
+    @override
+    Widget build(BuildContext context) {
+        final textColor = widget.isOwn
+            ? RastaTheme.bubbleOwnText
+            : RastaTheme.bubbleOtherText;
+
+        return Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+                // ── Кнопка Play / Pause ──
+                GestureDetector(
+                    onTap: _togglePlay,
+                    child: Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.black.withValues(alpha: 0.2),
+                        ),
+                        child: _isLoading
+                            ? const Padding(
+                                padding: EdgeInsets.all(12),
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    valueColor:
+                                        AlwaysStoppedAnimation<Color>(
+                                            Colors.white70,
+                                        ),
+                                ),
+                            )
+                            : Icon(
+                                _hasError
+                                    ? Icons.error_outline
+                                    : (_isPlaying
+                                        ? Icons.pause
+                                        : Icons.play_arrow),
+                                color: textColor,
+                                size: 26,
+                            ),
+                    ),
+                ),
+
+                const SizedBox(width: 10),
+
+                // ── Волна (фиксированная) ──
+                SizedBox(
+                    width: 120,
+                    height: 32,
+                    child: CustomPaint(
+                        painter: _WaveformPainter(
+                            progress: _duration.inMilliseconds > 0
+                                ? _position.inMilliseconds /
+                                    _duration.inMilliseconds
+                                : 0.0,
+                            color: textColor,
+                        ),
+                    ),
+                ),
+
+                const SizedBox(width: 10),
+
+                // ── Таймер ──
+                Text(
+                    _isLoading
+                        ? '--:--'
+                        : _formatDuration(
+                            _isPlaying || _position > Duration.zero
+                                ? _position
+                                : _duration,
+                        ),
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: textColor.withValues(alpha: 0.85),
+                    ),
+                ),
+            ],
+        );
+    }
+}
+
+// =====================================================
+// 🎨 ПРОСТАЯ ВОЛНА (фиксированная форма)
+// =====================================================
+// Рисует набор вертикальных полосок. Прогресс отображается
+// цветом: пройденная часть — ярче, оставшаяся — бледнее.
+// =====================================================
+
+class _WaveformPainter extends CustomPainter {
+    final double progress;
+    final Color color;
+
+    _WaveformPainter({
+        required this.progress,
+        required this.color,
+    });
+
+    // Высоты полосок (0.0 – 1.0), фиксированные — «как в Telegram»
+    static const List<double> _bars = [
+        0.30, 0.55, 0.75, 0.45, 0.90, 0.60, 0.35, 0.80,
+        0.50, 0.70, 0.40, 0.85, 0.55, 0.30, 0.65, 0.45,
+        0.75, 0.50, 0.80, 0.35, 0.60, 0.45, 0.70, 0.55,
+    ];
+
+    @override
+    void paint(Canvas canvas, Size size) {
+        const barCount = 24;
+        const barWidth = 2.0;
+        final gap = (size.width - barCount * barWidth) / (barCount - 1);
+
+        final playedBars = (progress * barCount).floor();
+
+        final paintPlayed = Paint()
+            ..color = color
+            ..strokeWidth = barWidth
+            ..strokeCap = StrokeCap.round;
+
+        final paintRemaining = Paint()
+            ..color = color.withValues(alpha: 0.35)
+            ..strokeWidth = barWidth
+            ..strokeCap = StrokeCap.round;
+
+        for (int i = 0; i < barCount; i++) {
+            final x = i * (barWidth + gap) + barWidth / 2;
+            final barHeight = _bars[i] * size.height;
+            final top = (size.height - barHeight) / 2;
+            final bottom = top + barHeight;
+
+            canvas.drawLine(
+                Offset(x, top),
+                Offset(x, bottom),
+                i <= playedBars ? paintPlayed : paintRemaining,
+            );
+        }
+    }
+
+    @override
+    bool shouldRepaint(_WaveformPainter oldDelegate) {
+        return oldDelegate.progress != progress ||
+            oldDelegate.color != color;
     }
 }
