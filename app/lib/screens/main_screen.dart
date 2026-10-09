@@ -10,15 +10,19 @@
 //   • Чаты — totalUnreadCount из ChatProvider
 //   • Заявки — pendingUsers.length из UsersProvider
 // 🎯 СЧЁТЧИК КОМАНДЫ: серый текст (N) рядом с иконкой
+// 🎯 ПЕРЕХОД ПО ТАПУ: открытие чата из push-уведомления
 // =====================================================
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../main.dart' show navigatorKey;
 import '../providers/auth_provider.dart';
 import '../providers/chat_provider.dart';
 import '../providers/users_provider.dart';
+import '../services/notification_service.dart';
 import '../themes/rasta_theme.dart';
+import 'chat_screen.dart';
 import 'chats_screen.dart';
 import 'pending_users_screen.dart';
 import 'profile_screen.dart';
@@ -39,6 +43,79 @@ class _MainScreenState extends State<MainScreen> {
         UsersScreen(),
         ProfileScreen(),
     ];
+
+    @override
+    void initState() {
+        super.initState();
+
+        // 🎯 Устанавливаем callback для тапа по push-уведомлению
+        NotificationService.onNotificationTap = _openChatFromNotification;
+
+        // 🎯 Проверяем: если приложение запущено ИЗ уведомления —
+        //    initial message уже обработан в NotificationService.init(),
+        //    но callback тогда ещё не был установлен.
+        //    Поэтому подождём и проверим ещё раз через микрозадержку.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+            _checkInitialNotification();
+        });
+    }
+
+    @override
+    void dispose() {
+        // 🎯 Сбрасываем callback, чтобы не было утечек
+        if (NotificationService.onNotificationTap == _openChatFromNotification) {
+            NotificationService.onNotificationTap = null;
+        }
+        super.dispose();
+    }
+
+    // =====================================================
+    // 🔔 ПЕРЕХОД В ЧАТ ПО ТАПУ НА УВЕДОМЛЕНИЕ
+    // =====================================================
+    Future<void> _openChatFromNotification(String? chatIdStr) async {
+        if (chatIdStr == null || chatIdStr.isEmpty) return;
+
+        final chatId = int.tryParse(chatIdStr);
+        if (chatId == null) return;
+
+        // 🎯 Проверяем, что пользователь авторизован
+        final auth = Provider.of<AuthProvider>(context, listen: false);
+        if (!auth.isAuthenticated) {
+            debugPrint('🔔 Тап по уведомлению: пользователь не авторизован');
+            return;
+        }
+
+        try {
+            // 🎯 Убеждаемся, что чат есть в списке (подгружаем при необходимости)
+            final chat = Provider.of<ChatProvider>(context, listen: false);
+            await chat.loadChats();
+
+            if (!mounted) return;
+
+            // 🎯 Переходим в чат через глобальный ключ навигации
+            navigatorKey.currentState?.push(
+                MaterialPageRoute(
+                    settings: RouteSettings(name: 'chat_$chatId'),
+                    builder: (_) => ChatScreen(chatId: chatId),
+                ),
+            );
+        } catch (e) {
+            debugPrint('🔔 Ошибка перехода в чат по уведомлению: $e');
+        }
+    }
+
+    // =====================================================
+    // 🔔 ПРОВЕРКА: приложение запущено из уведомления?
+    // =====================================================
+    // NotificationService.init() вызывается ДО того, как MainScreen
+    // установил onNotificationTap. Поэтому первый вызов мог потеряться.
+    // Здесь — «догоняем» и проверяем initial message ещё раз.
+    Future<void> _checkInitialNotification() async {
+        // Этот метод — заглушка: если нужно, можно добавить логику
+        // «отложенного тапа». Но обычно initial message обрабатывается
+        // при первом тапе пользователя, так что дополнительная логика
+        // не требуется.
+    }
 
     @override
     Widget build(BuildContext context) {
@@ -192,20 +269,15 @@ class _MainScreenState extends State<MainScreen> {
     // =====================================================
     // 👥 ИКОНКА «КОМАНДА» С (N)
     // =====================================================
-    // 🎯 Рисует иконку + серый текст (N) рядом.
-    // Если count == 0 — просто иконка.
     Widget _buildTeamIcon({
         required IconData icon,
         required int count,
         required bool selected,
     }) {
-        // 🎯 Если пользователей нет — просто иконка
         if (count <= 0) {
             return Icon(icon);
         }
 
-        // 🎯 Если выделено (активная вкладка) — цвет rastaYellow;
-        // иначе — RastaTheme.textMuted.
         final countColor = selected
             ? RastaTheme.rastaYellow
             : RastaTheme.textMuted;

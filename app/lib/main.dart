@@ -22,6 +22,14 @@ import 'providers/users_provider.dart';
 import 'services/notification_service.dart';
 
 // =====================================================
+// 🎯 ГЛОБАЛЬНЫЙ КЛЮЧ НАВИГАЦИИ
+// =====================================================
+// Нужен для перехода в чат по тапу на push-уведомление.
+// Устанавливается в MaterialApp → доступен из любого места
+// приложения через navigatorKey.currentState.
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+// =====================================================
 // 🚀 ТОЧКА ВХОДА
 // =====================================================
 void main() async {
@@ -81,6 +89,7 @@ class BMSChatApp extends StatelessWidget {
             child: MaterialApp(
                 title: 'BMSChat',
                 debugShowCheckedModeBanner: false,
+                navigatorKey: navigatorKey,
                 theme: RastaTheme.darkTheme,
                 home: const SplashScreen(),
             ),
