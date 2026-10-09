@@ -21,6 +21,8 @@
 //    обработка socket-события history_cleared
 // 🎯 КЭШ (Уровень 1): TTL 5 мин, openChat не ходит в сеть
 //    при свежем кэше + refreshFromServer для pull-to-refresh
+// 🎯 ДОКУМЕНТЫ: sendFile для file добавляет name и size
+//    в текст сообщения (формат: FILE:<path>|name=..|size=..)
 // =====================================================
 
 import 'dart:async';
@@ -1477,6 +1479,8 @@ class ChatProvider extends ChangeNotifier {
             final fileData = uploadResponse.data!;
             final uploadedPath = fileData['file_path'] as String;
             final fileType = fileData['file_type'] as String? ?? type;
+            final uploadedName = fileData['file_name'] as String?;
+            final uploadedSize = fileData['file_size'] as int?;
 
             AppLogger.success('Файл загружен: $uploadedPath (тип: $fileType)');
 
@@ -1492,7 +1496,21 @@ class ChatProvider extends ChangeNotifier {
                     prefix = 'FILE:';
             }
 
-            final textWithPrefix = '$prefix$uploadedPath';
+            // 🎯 ДОКУМЕНТЫ: для файлов добавляем имя и размер в метаданные.
+            // Формат: FILE:/api/files/<id>|name=<encoded>|size=<bytes>
+            // Имя URL-encode — на случай кириллицы, пробелов, `|` и `=`.
+            final String textWithPrefix;
+            if (prefix == 'FILE:') {
+                final namePart = uploadedName != null && uploadedName.isNotEmpty
+                    ? '|name=${Uri.encodeComponent(uploadedName)}'
+                    : '';
+                final sizePart = uploadedSize != null
+                    ? '|size=$uploadedSize'
+                    : '';
+                textWithPrefix = '$prefix$uploadedPath$namePart$sizePart';
+            } else {
+                textWithPrefix = '$prefix$uploadedPath';
+            }
 
             SocketService.sendMessage(
                 chatId: _activeChat!.id,

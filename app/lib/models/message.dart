@@ -3,6 +3,10 @@
 // =====================================================
 // 🎯 ЭТАП B.3: добавлен геттер displayPreview —
 //   для превью цитируемого сообщения (reply preview)
+// 🎯 ДОКУМЕНТЫ: парсинг метаданных из текста для FILE:
+//   Формат: FILE:/api/files/<id>|name=<encoded>|size=<bytes>
+//   Геттеры: fileDisplayName, fileSize, fileExtension,
+//   formattedFileSize, isApkMessage, isArchiveMessage, isDocMessage
 // =====================================================
 
 import 'package:intl/intl.dart';
@@ -161,15 +165,15 @@ class Message {
     }
 
     /// 🎯 ЭТАП B.3: превью для цитаты в reply.
-    /// Показывает:
-    ///   • «Сообщение удалено» — если удалено
-    ///   • «🖼 Фото» / «🎤 Голосовое» / «📎 Файл» — для вложений
-    ///   • Сам текст — для обычных сообщений
+    /// 🎯 ДОКУМЕНТЫ: для файла показываем имя файла, если есть.
     String get displayPreview {
         if (isDeleted) return 'Сообщение удалено';
         if (isImageMessage) return '🖼 Фото';
         if (isVoiceMessage) return '🎤 Голосовое';
-        if (isFileMessage) return '📎 Файл';
+        if (isFileMessage) {
+            final name = fileDisplayName;
+            return name != null ? '📎 $name' : '📎 Файл';
+        }
         return displayText;
     }
 
@@ -185,12 +189,20 @@ class Message {
         return null;
     }
 
+    /// 🎯 ДОКУМЕНТЫ: путь к файлу без метаданных.
+    /// Для IMG/VOICE — как было. Для FILE — обрезаем по `|`.
     String? get filePath {
         if (text == null || text!.isEmpty) return null;
 
         final prefix = _filePrefix;
-        if (prefix != null) {
-            return text!.substring(prefix.length);
+        if (prefix == 'IMG:' || prefix == 'VOICE:') {
+            return text!.substring(prefix!.length);
+        }
+        if (prefix == 'FILE:') {
+            final raw = text!.substring('FILE:'.length);
+            // Обрезаем метаданные (name=..., size=...)
+            final pipeIdx = raw.indexOf('|');
+            return pipeIdx >= 0 ? raw.substring(0, pipeIdx) : raw;
         }
 
         if (text!.startsWith('/uploads/') ||
@@ -199,6 +211,91 @@ class Message {
         }
 
         return null;
+    }
+
+    // =====================================================
+    // 🎯 ДОКУМЕНТЫ: ПАРСИНГ МЕТАДАННЫХ
+    // =====================================================
+    // Формат: FILE:/api/files/abc|name=Отчёт.pdf|size=123456
+    // Имя может быть URL-encoded (кириллица, пробелы, спецсимволы).
+    // =====================================================
+
+    /// Приватный разбор метаданных из текста `FILE:...`.
+    /// Возвращает `{name: String?, size: int?}` или пустой Map.
+    Map<String, dynamic> get _fileMetadata {
+        if (_filePrefix != 'FILE:') return const {};
+
+        final raw = text!.substring('FILE:'.length);
+        final parts = raw.split('|');
+
+        String? name;
+        int? size;
+
+        for (int i = 1; i < parts.length; i++) {
+            final part = parts[i];
+            final eq = part.indexOf('=');
+            if (eq <= 0) continue;
+
+            final key = part.substring(0, eq);
+            final value = part.substring(eq + 1);
+
+            if (key == 'name' && value.isNotEmpty) {
+                try {
+                    name = Uri.decodeComponent(value);
+                } catch (_) {
+                    name = value; // fallback: как есть
+                }
+            } else if (key == 'size') {
+                size = int.tryParse(value);
+            }
+        }
+
+        return {'name': name, 'size': size};
+    }
+
+    /// 🎯 Читаемое имя файла.
+    /// Приоритет: `name=` из метаданных → последний сегмент пути.
+    String? get fileDisplayName {
+        if (!isFileMessage) return null;
+        if (_filePrefix == 'FILE:') {
+            final name = _fileMetadata['name'] as String?;
+            if (name != null && name.isNotEmpty) return name;
+        }
+        // Fallback: последний сегмент пути
+        final path = filePath;
+        if (path == null || path.isEmpty) return null;
+        final segments = path.split('/');
+        return segments.isNotEmpty ? segments.last : null;
+    }
+
+    /// 🎯 Размер файла в байтах, если известен.
+    int? get fileSize {
+        if (!isFileMessage) return null;
+        if (_filePrefix == 'FILE:') {
+            return _fileMetadata['size'] as int?;
+        }
+        return null;
+    }
+
+    /// 🎯 Расширение файла в lowercase (включая точку). Например: `.pdf`.
+    String? get fileExtension {
+        final name = fileDisplayName;
+        if (name == null) return null;
+        final dot = name.lastIndexOf('.');
+        if (dot <= 0 || dot == name.length - 1) return null;
+        return name.substring(dot).toLowerCase();
+    }
+
+    /// 🎯 Размер в человекочитаемом виде: «512 Б» / «345 КБ» / «12.3 МБ».
+    String? get formattedFileSize {
+        final size = fileSize;
+        if (size == null) return null;
+
+        if (size < 1024) return '$size Б';
+        if (size < 1024 * 1024) {
+            return '${(size / 1024).toStringAsFixed(1)} КБ';
+        }
+        return '${(size / 1024 / 1024).toStringAsFixed(1)} МБ';
     }
 
     bool get isImageMessage {
@@ -238,6 +335,32 @@ class Message {
 
     bool get isFileMessage => filePath != null;
     bool get isTextMessage => filePath == null;
+
+    /// 🎯 APK-файл
+    bool get isApkMessage {
+        final ext = fileExtension;
+        return ext == '.apk';
+    }
+
+    /// 🎯 Архив (ZIP/RAR/7Z)
+    bool get isArchiveMessage {
+        final ext = fileExtension;
+        return ext == '.zip' || ext == '.rar' || ext == '.7z';
+    }
+
+    /// 🎯 Документ Office/PDF
+    bool get isDocMessage {
+        final ext = fileExtension;
+        return ext == '.pdf' ||
+               ext == '.doc' ||
+               ext == '.docx' ||
+               ext == '.xls' ||
+               ext == '.xlsx' ||
+               ext == '.ppt' ||
+               ext == '.pptx' ||
+               ext == '.txt' ||
+               ext == '.csv';
+    }
 
     // =====================================================
     // 🛠️ ГЕТТЕРЫ ОТОБРАЖЕНИЯ
