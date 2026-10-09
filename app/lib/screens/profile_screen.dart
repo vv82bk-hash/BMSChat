@@ -1,81 +1,131 @@
-import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import 'package:intl/intl.dart';
+// =====================================================
+// 👤 BMSChat — ЭКРАН ПРОФИЛЯ
+// =====================================================
+// 🎯 Аватар: тап → галерея/камера → загрузка на сервер
+// 🎯 Имя: карандаш → диалог → PATCH /api/users/me
+// 🎯 Аватар показывается через CachedNetworkImage, если есть
+// =====================================================
 
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
+
+import '../config/constants.dart';
+import '../models/user.dart';
 import '../providers/auth_provider.dart';
+import '../services/api_service.dart';
 import '../themes/rasta_theme.dart';
 import 'settings_screen.dart';
 
-class ProfileScreen extends StatelessWidget {
+class ProfileScreen extends StatefulWidget {
     const ProfileScreen({super.key});
 
     @override
-    Widget build(BuildContext context) {
-        final auth = Provider.of<AuthProvider>(context);
-        final user = auth.user;
+    State<ProfileScreen> createState() => _ProfileScreenState();
+}
 
-        if (user == null) {
-            return const Scaffold(
-                backgroundColor: RastaTheme.background,
-                body: Center(
-                    child: Text(
-                        'Не авторизован',
-                        style: TextStyle(color: RastaTheme.textMuted),
-                    ),
-                ),
-            );
-        }
+class _ProfileScreenState extends State<ProfileScreen> {
+    final _imagePicker = ImagePicker();
+    bool _isUploadingAvatar = false;
 
-        return Scaffold(
-            backgroundColor: RastaTheme.background,
-            appBar: AppBar(
-                title: const Text('👤 Профиль'),
-                actions: [
-                    IconButton(
-                        icon: const Icon(Icons.settings_outlined),
-                        onPressed: () {
-                            Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                    builder: (_) => const SettingsScreen(),
+    // ============================================
+    // 🖼️ АВАТАР
+    // ============================================
+    Widget _buildAvatar(User user) {
+        final hasAvatar = user.avatar != null && user.avatar!.isNotEmpty;
+        final avatarUrl = hasAvatar
+            ? Constants.getFullFileUrl(user.avatar)
+            : null;
+
+        return GestureDetector(
+            onTap: _isUploadingAvatar ? null : () => _onAvatarTap(),
+            child: Stack(
+                children: [
+                    Container(
+                        width: 120,
+                        height: 120,
+                        decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: hasAvatar
+                                ? null
+                                : const LinearGradient(
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                    colors: [
+                                        RastaTheme.rastaRed,
+                                        RastaTheme.rastaYellow,
+                                        RastaTheme.rastaGreen,
+                                    ],
                                 ),
-                            );
-                        },
-                        tooltip: 'Настройки',
+                            boxShadow: [
+                                BoxShadow(
+                                    color: RastaTheme.rastaYellow
+                                        .withValues(alpha: 0.3),
+                                    blurRadius: 30,
+                                    spreadRadius: 5,
+                                ),
+                            ],
+                        ),
+                        child: ClipOval(
+                            child: _isUploadingAvatar
+                                ? const Center(
+                                    child: CircularProgressIndicator(
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                                RastaTheme.rastaYellow,
+                                            ),
+                                    ),
+                                )
+                                : hasAvatar
+                                    ? CachedNetworkImage(
+                                        imageUrl: avatarUrl!,
+                                        width: 120,
+                                        height: 120,
+                                        fit: BoxFit.cover,
+                                        placeholder: (context, url) =>
+                                            _buildInitials(user),
+                                        errorWidget:
+                                            (context, url, error) =>
+                                                _buildInitials(user),
+                                    )
+                                    : _buildInitials(user),
+                        ),
+                    ),
+
+                    Positioned(
+                        right: 0,
+                        bottom: 0,
+                        child: Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: RastaTheme.rastaYellow,
+                                border: Border.all(
+                                    color: RastaTheme.background,
+                                    width: 3,
+                                ),
+                            ),
+                            child: const Icon(
+                                Icons.camera_alt,
+                                color: Colors.black,
+                                size: 18,
+                            ),
+                        ),
                     ),
                 ],
-            ),
-            body: SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                    children: [
-                        _buildAvatar(user),
-                        const SizedBox(height: 16),
-                        _buildNameSection(user),
-                        const SizedBox(height: 24),
-                        _buildRolesSection(user),
-                        const SizedBox(height: 16),
-                        _buildStatsSection(user),
-                        const SizedBox(height: 16),
-                        _buildPermissionsSection(user),
-                        const SizedBox(height: 24),
-                        _buildLogoutButton(context),
-                    ],
-                ),
             ),
         );
     }
 
-    // ============================================
-    // 👤 АВАТАР
-    // ============================================
-    Widget _buildAvatar(dynamic user) {
+    Widget _buildInitials(User user) {
         return Container(
             width: 120,
             height: 120,
-            decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: const LinearGradient(
+            decoration: const BoxDecoration(
+                gradient: LinearGradient(
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                     colors: [
@@ -84,13 +134,6 @@ class ProfileScreen extends StatelessWidget {
                         RastaTheme.rastaGreen,
                     ],
                 ),
-                boxShadow: [
-                    BoxShadow(
-                        color: RastaTheme.rastaYellow.withValues(alpha: 0.3),
-                        blurRadius: 30,
-                        spreadRadius: 5,
-                    ),
-                ],
             ),
             child: Center(
                 child: Text(
@@ -105,20 +148,161 @@ class ProfileScreen extends StatelessWidget {
         );
     }
 
+    Future<void> _onAvatarTap() async {
+        final source = await showModalBottomSheet<ImageSource>(
+            context: context,
+            backgroundColor: RastaTheme.surface,
+            shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            builder: (_) => SafeArea(
+                child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                        const SizedBox(height: 8),
+                        Container(
+                            width: 40,
+                            height: 4,
+                            decoration: BoxDecoration(
+                                color: RastaTheme.textMuted
+                                    .withValues(alpha: 0.4),
+                                borderRadius: BorderRadius.circular(2),
+                            ),
+                        ),
+                        const SizedBox(height: 16),
+                        const Text(
+                            'Сменить аватар',
+                            style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                color: RastaTheme.textPrimary,
+                            ),
+                        ),
+                        const SizedBox(height: 8),
+                        ListTile(
+                            leading: const Icon(
+                                Icons.photo_library_outlined,
+                                color: RastaTheme.rastaYellow,
+                                size: 28,
+                            ),
+                            title: const Text(
+                                'Из галереи',
+                                style: TextStyle(
+                                    color: RastaTheme.textPrimary,
+                                    fontSize: 16,
+                                ),
+                            ),
+                            onTap: () =>
+                                Navigator.pop(context, ImageSource.gallery),
+                        ),
+                        ListTile(
+                            leading: const Icon(
+                                Icons.camera_alt_outlined,
+                                color: RastaTheme.rastaYellow,
+                                size: 28,
+                            ),
+                            title: const Text(
+                                'Сделать фото',
+                                style: TextStyle(
+                                    color: RastaTheme.textPrimary,
+                                    fontSize: 16,
+                                ),
+                            ),
+                            onTap: () =>
+                                Navigator.pop(context, ImageSource.camera),
+                        ),
+                        const SizedBox(height: 8),
+                    ],
+                ),
+            ),
+        );
+
+        if (source == null || !mounted) return;
+
+        try {
+            final XFile? image = await _imagePicker.pickImage(
+                source: source,
+                imageQuality: 80,
+                maxWidth: 800,
+                maxHeight: 800,
+            );
+
+            if (image == null) return;
+            if (!mounted) return;
+
+            setState(() => _isUploadingAvatar = true);
+
+            final uploadResponse = await ApiService.uploadFile(image, 'image');
+
+            if (!mounted) return;
+
+            if (!uploadResponse.isSuccess || uploadResponse.data == null) {
+                _showError(
+                    uploadResponse.error ?? 'Не удалось загрузить аватар',
+                );
+                setState(() => _isUploadingAvatar = false);
+                return;
+            }
+
+            final uploadedPath =
+                uploadResponse.data!['file_path'] as String?;
+
+            if (uploadedPath == null) {
+                _showError('Сервер не вернул путь к файлу');
+                setState(() => _isUploadingAvatar = false);
+                return;
+            }
+
+            final auth = Provider.of<AuthProvider>(context, listen: false);
+            final success = await auth.updateProfile(avatar: uploadedPath);
+
+            if (!mounted) return;
+
+            setState(() => _isUploadingAvatar = false);
+
+            if (success) {
+                _showInfo('Аватар обновлён');
+            } else {
+                _showError(auth.error ?? 'Не удалось сохранить аватар');
+            }
+        } catch (e) {
+            if (!mounted) return;
+            setState(() => _isUploadingAvatar = false);
+            _showError('Ошибка: $e');
+        }
+    }
+
     // ============================================
     // 📝 ИМЯ
     // ============================================
-    Widget _buildNameSection(dynamic user) {
+    Widget _buildNameSection(User user) {
         return Column(
             children: [
-                Text(
-                    user.displayName,
-                    style: const TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w700,
-                        color: RastaTheme.textPrimary,
-                    ),
-                    textAlign: TextAlign.center,
+                Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                        Flexible(
+                            child: Text(
+                                user.displayName,
+                                style: const TextStyle(
+                                    fontSize: 24,
+                                    fontWeight: FontWeight.w700,
+                                    color: RastaTheme.textPrimary,
+                                ),
+                                textAlign: TextAlign.center,
+                            ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                            icon: const Icon(
+                                Icons.edit,
+                                size: 20,
+                                color: RastaTheme.rastaYellow,
+                            ),
+                            tooltip: 'Изменить имя',
+                            onPressed: () => _onEditNameTap(user),
+                        ),
+                    ],
                 ),
                 const SizedBox(height: 4),
                 Text(
@@ -132,10 +316,85 @@ class ProfileScreen extends StatelessWidget {
         );
     }
 
+    Future<void> _onEditNameTap(User user) async {
+        final controller = TextEditingController(text: user.displayName);
+
+        final newName = await showDialog<String>(
+            context: context,
+            builder: (_) => AlertDialog(
+                backgroundColor: RastaTheme.surface,
+                title: const Text(
+                    'Изменить имя',
+                    style: TextStyle(
+                        color: RastaTheme.textPrimary,
+                        fontSize: 20,
+                    ),
+                ),
+                content: TextField(
+                    controller: controller,
+                    autofocus: true,
+                    maxLength: 100,
+                    style: const TextStyle(
+                        color: RastaTheme.textPrimary,
+                        fontSize: 16,
+                    ),
+                    decoration: const InputDecoration(
+                        hintText: 'Как вас зовут?',
+                        hintStyle: TextStyle(color: RastaTheme.textMuted),
+                        counterStyle: TextStyle(color: RastaTheme.textMuted),
+                    ),
+                ),
+                actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text(
+                            'Отмена',
+                            style: TextStyle(
+                                color: RastaTheme.textMuted,
+                                fontSize: 16,
+                            ),
+                        ),
+                    ),
+                    TextButton(
+                        onPressed: () =>
+                            Navigator.pop(context, controller.text.trim()),
+                        child: const Text(
+                            'Сохранить',
+                            style: TextStyle(
+                                color: RastaTheme.rastaYellow,
+                                fontSize: 16,
+                            ),
+                        ),
+                    ),
+                ],
+            ),
+        );
+
+        if (newName == null || newName.isEmpty) return;
+        if (newName == user.displayName) return;
+        if (newName.length < 2) {
+            _showError('Имя слишком короткое');
+            return;
+        }
+
+        if (!mounted) return;
+
+        final auth = Provider.of<AuthProvider>(context, listen: false);
+        final success = await auth.updateProfile(displayName: newName);
+
+        if (!mounted) return;
+
+        if (success) {
+            _showInfo('Имя обновлено');
+        } else {
+            _showError(auth.error ?? 'Не удалось сохранить имя');
+        }
+    }
+
     // ============================================
     // 🎭 РОЛИ
     // ============================================
-    Widget _buildRolesSection(dynamic user) {
+    Widget _buildRolesSection(User user) {
         if (user.roles.isEmpty) {
             return const SizedBox.shrink();
         }
@@ -190,7 +449,7 @@ class ProfileScreen extends StatelessWidget {
     // ============================================
     // 📊 СТАТИСТИКА
     // ============================================
-    Widget _buildStatsSection(dynamic user) {
+    Widget _buildStatsSection(User user) {
         final created = user.createdAt != null
             ? DateFormat('dd.MM.yyyy').format(user.createdAt!)
             : '—';
@@ -220,6 +479,12 @@ class ProfileScreen extends StatelessWidget {
                         color: user.isOnline
                             ? RastaTheme.online
                             : RastaTheme.textMuted,
+                    ),
+                    const SizedBox(height: 8),
+                    _buildStatRow(
+                        Icons.access_time,
+                        'Последний визит',
+                        user.lastSeenText,
                     ),
                     const SizedBox(height: 8),
                     _buildStatRow(
@@ -271,7 +536,7 @@ class ProfileScreen extends StatelessWidget {
     // ============================================
     // 🔐 ПРАВА
     // ============================================
-    Widget _buildPermissionsSection(dynamic user) {
+    Widget _buildPermissionsSection(User user) {
         final permissions = [
             _Permission('Писать в общий чат', user.canWriteGeneral),
             _Permission('Писать в личные чаты', user.canWritePrivate),
@@ -393,6 +658,92 @@ class ProfileScreen extends StatelessWidget {
         if (confirmed == true && context.mounted) {
             await Provider.of<AuthProvider>(context, listen: false).logout();
         }
+    }
+
+    // ============================================
+    // 🛠️ УТИЛИТЫ
+    // ============================================
+    void _showError(String message) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+                content: Text(message),
+                backgroundColor: RastaTheme.error,
+                behavior: SnackBarBehavior.floating,
+            ),
+        );
+    }
+
+    void _showInfo(String message) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+                content: Text(message),
+                backgroundColor: RastaTheme.success,
+                behavior: SnackBarBehavior.floating,
+                duration: const Duration(seconds: 2),
+            ),
+        );
+    }
+
+    // ============================================
+    // 🎨 BUILD
+    // ============================================
+    @override
+    Widget build(BuildContext context) {
+        final auth = Provider.of<AuthProvider>(context);
+        final user = auth.user;
+
+        if (user == null) {
+            return const Scaffold(
+                backgroundColor: RastaTheme.background,
+                body: Center(
+                    child: Text(
+                        'Не авторизован',
+                        style: TextStyle(color: RastaTheme.textMuted),
+                    ),
+                ),
+            );
+        }
+
+        return Scaffold(
+            backgroundColor: RastaTheme.background,
+            appBar: AppBar(
+                title: const Text('👤 Профиль'),
+                actions: [
+                    IconButton(
+                        icon: const Icon(Icons.settings_outlined),
+                        onPressed: () {
+                            Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (_) => const SettingsScreen(),
+                                ),
+                            );
+                        },
+                        tooltip: 'Настройки',
+                    ),
+                ],
+            ),
+            body: SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                    children: [
+                        _buildAvatar(user),
+                        const SizedBox(height: 16),
+                        _buildNameSection(user),
+                        const SizedBox(height: 24),
+                        _buildRolesSection(user),
+                        const SizedBox(height: 16),
+                        _buildStatsSection(user),
+                        const SizedBox(height: 16),
+                        _buildPermissionsSection(user),
+                        const SizedBox(height: 24),
+                        _buildLogoutButton(context),
+                    ],
+                ),
+            ),
+        );
     }
 }
 

@@ -1,262 +1,195 @@
 // =====================================================
 // ⚙️ BMSChat — ЭКРАН НАСТРОЕК
 // =====================================================
-// Настройки приложения:
-//   • Смена пароля
-//   • Политика обработки ПД
-//   • О приложении
-//   • Выход из аккаунта
+// 🎯 Базовые настройки приложения.
+// 🎯 Заглушки для будущих фич (тема, уведомления, кэш).
 // =====================================================
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../config/constants.dart';
+import '../providers/auth_provider.dart';
 import '../themes/rasta_theme.dart';
 
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
     const SettingsScreen({super.key});
 
     @override
+    State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+    @override
     Widget build(BuildContext context) {
+        final auth = Provider.of<AuthProvider>(context);
+        final user = auth.user;
+
         return Scaffold(
             backgroundColor: RastaTheme.background,
             appBar: AppBar(
                 title: const Text('⚙️ Настройки'),
             ),
             body: ListView(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.symmetric(vertical: 8),
                 children: [
+                    _buildSectionHeader('Аккаунт'),
                     _buildTile(
-                        context,
-                        icon: Icons.lock_outline,
-                        title: 'Сменить пароль',
-                        subtitle: 'Обновить пароль от аккаунта',
-                        onTap: () => _showChangePasswordDialog(context),
+                        icon: Icons.person_outline,
+                        title: 'Имя',
+                        subtitle: user?.displayName ?? '—',
                     ),
                     _buildTile(
-                        context,
-                        icon: Icons.privacy_tip_outlined,
-                        title: 'Политика обработки ПД',
-                        subtitle: 'Как мы работаем с данными',
-                        onTap: () => _showPrivacyPolicy(context),
+                        icon: Icons.alternate_email,
+                        title: 'Логин',
+                        subtitle: user != null ? '@${user.username}' : '—',
+                    ),
+
+                    const SizedBox(height: 8),
+
+                    _buildSectionHeader('Уведомления'),
+                    _buildTile(
+                        icon: Icons.notifications_outlined,
+                        title: 'Push-уведомления',
+                        subtitle: 'Скоро',
+                        onTap: () => _showSoon(context, 'Уведомления'),
                     ),
                     _buildTile(
-                        context,
+                        icon: Icons.volume_up_outlined,
+                        title: 'Звуки',
+                        subtitle: 'Скоро',
+                        onTap: () => _showSoon(context, 'Звуки'),
+                    ),
+
+                    const SizedBox(height: 8),
+
+                    _buildSectionHeader('Внешний вид'),
+                    _buildTile(
+                        icon: Icons.palette_outlined,
+                        title: 'Тема',
+                        subtitle: 'Rasta (по умолчанию)',
+                        onTap: () => _showSoon(context, 'Смена темы'),
+                    ),
+                    _buildTile(
+                        icon: Icons.language_outlined,
+                        title: 'Язык',
+                        subtitle: 'Русский',
+                        onTap: () => _showSoon(context, 'Смена языка'),
+                    ),
+
+                    const SizedBox(height: 8),
+
+                    _buildSectionHeader('Данные и хранилище'),
+                    _buildTile(
+                        icon: Icons.cleaning_services_outlined,
+                        title: 'Очистить кэш',
+                        subtitle: 'Освободить место',
+                        onTap: () => _clearCache(context),
+                    ),
+
+                    const SizedBox(height: 8),
+
+                    _buildSectionHeader('О приложении'),
+                    _buildTile(
                         icon: Icons.info_outline,
-                        title: 'О приложении',
-                        subtitle: 'Версия 1.0.0',
-                        onTap: () => _showAbout(context),
+                        title: 'Версия',
+                        subtitle: Constants.appVersion,
                     ),
+                    _buildTile(
+                        icon: Icons.groups_outlined,
+                        title: Constants.teamName,
+                        subtitle: Constants.teamMotto,
+                    ),
+
                     const SizedBox(height: 24),
-                    OutlinedButton.icon(
-                        onPressed: () => _confirmLogout(context),
-                        icon: const Icon(Icons.logout, color: RastaTheme.error),
-                        label: const Text(
-                            'Выйти из аккаунта',
-                            style: TextStyle(
-                                color: RastaTheme.error,
-                                fontSize: 16,
-                            ),
-                        ),
-                        style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            side: const BorderSide(color: RastaTheme.error),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                            ),
-                        ),
-                    ),
-                    const SizedBox(height: 24),
-                    Center(
-                        child: Text(
-                            '🌿 One Love 🤙',
-                            style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: RastaTheme.textMuted.withValues(alpha: 0.6),
-                            ),
-                        ),
-                    ),
                 ],
             ),
         );
     }
 
-    Widget _buildTile(
-        BuildContext context, {
+    Widget _buildSectionHeader(String title) {
+        return Padding(
+            padding: const EdgeInsets.only(
+                left: 16,
+                right: 16,
+                top: 16,
+                bottom: 4,
+            ),
+            child: Text(
+                title.toUpperCase(),
+                style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: RastaTheme.textMuted,
+                    letterSpacing: 1.0,
+                ),
+            ),
+        );
+    }
+
+    Widget _buildTile({
         required IconData icon,
         required String title,
-        required String subtitle,
-        required VoidCallback onTap,
+        String? subtitle,
+        VoidCallback? onTap,
     }) {
-        return Container(
-            margin: const EdgeInsets.only(bottom: 8),
-            decoration: BoxDecoration(
-                color: RastaTheme.surface,
-                borderRadius: BorderRadius.circular(12),
+        return ListTile(
+            leading: Icon(
+                icon,
+                color: RastaTheme.rastaYellow,
+                size: 26,
             ),
-            child: ListTile(
-                leading: Icon(icon, color: RastaTheme.rastaYellow),
-                title: Text(
-                    title,
-                    style: const TextStyle(
-                        color: RastaTheme.textPrimary,
-                        fontWeight: FontWeight.w600,
-                    ),
+            title: Text(
+                title,
+                style: const TextStyle(
+                    fontSize: 16,
+                    color: RastaTheme.textPrimary,
+                    fontWeight: FontWeight.w500,
                 ),
-                subtitle: Text(
+            ),
+            subtitle: subtitle != null
+                ? Text(
                     subtitle,
                     style: const TextStyle(
-                        color: RastaTheme.textMuted,
                         fontSize: 13,
+                        color: RastaTheme.textMuted,
                     ),
-                ),
-                trailing: const Icon(
+                )
+                : null,
+            trailing: onTap != null
+                ? const Icon(
                     Icons.chevron_right,
                     color: RastaTheme.textMuted,
-                ),
-                onTap: onTap,
+                    size: 22,
+                )
+                : null,
+            onTap: onTap,
+        );
+    }
+
+    void _showSoon(BuildContext context, String feature) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+                content: Text('$feature — скоро'),
+                backgroundColor: RastaTheme.rastaYellow,
+                behavior: SnackBarBehavior.floating,
+                duration: const Duration(seconds: 2),
             ),
         );
     }
 
-    void _showChangePasswordDialog(BuildContext context) {
-        showDialog(
-            context: context,
-            builder: (_) => AlertDialog(
-                backgroundColor: RastaTheme.surface,
-                title: const Text(
-                    'Смена пароля',
-                    style: TextStyle(color: RastaTheme.textPrimary),
-                ),
-                content: const Text(
-                    'Функция будет доступна в следующей версии.\n\n'
-                    'Пока что обратитесь к администратору.',
-                    style: TextStyle(color: RastaTheme.textSecondary),
-                ),
-                actions: [
-                    TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text(
-                            'Понятно',
-                            style: TextStyle(color: RastaTheme.rastaYellow),
-                        ),
-                    ),
-                ],
-            ),
-        );
-    }
-
-    void _showPrivacyPolicy(BuildContext context) {
-        showDialog(
-            context: context,
-            builder: (_) => AlertDialog(
-                backgroundColor: RastaTheme.surface,
-                title: const Text(
-                    'Политика обработки ПД',
-                    style: TextStyle(color: RastaTheme.textPrimary),
-                ),
-                content: const SingleChildScrollView(
-                    child: Text(
-                        'Дата последнего обновления: 16.09.2026\n\n'
-                        '1. Общие положения\n'
-                        'Настоящая Политика описывает, как приложение BMSChat '
-                        'работает с персональными данными.\n\n'
-                        '2. Какие данные мы обрабатываем\n'
-                        '• Логин (username)\n'
-                        '• Пароль (хранится в виде хеша)\n'
-                        '• Отображаемое имя\n'
-                        '• Сообщения и их метаданные\n\n'
-                        '3. Цели обработки\n'
-                        '• Идентификация в приложении\n'
-                        '• Обеспечение работы мессенджера\n'
-                        '• Связь внутри команды\n\n'
-                        '4. Хранение\n'
-                        'Данные хранятся на серверах, расположенных на территории РФ.\n\n'
-                        '5. Ваши права\n'
-                        'Вы можете запросить удаление своих данных.\n\n'
-                        '6. Согласие\n'
-                        'Используя приложение, вы соглашаетесь с обработкой данных.',
-                        style: TextStyle(color: RastaTheme.textSecondary),
-                    ),
-                ),
-                actions: [
-                    TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text(
-                            'Понятно',
-                            style: TextStyle(color: RastaTheme.rastaYellow),
-                        ),
-                    ),
-                ],
-            ),
-        );
-    }
-
-    void _showAbout(BuildContext context) {
-        showDialog(
-            context: context,
-            builder: (_) => AlertDialog(
-                backgroundColor: RastaTheme.surface,
-                title: const Row(
-                    children: [
-                        Text('🎯', style: TextStyle(fontSize: 28)),
-                        SizedBox(width: 8),
-                        Text(
-                            'BMSChat',
-                            style: TextStyle(color: RastaTheme.rastaYellow),
-                        ),
-                    ],
-                ),
-                content: const Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                        Text(
-                            'Версия 1.0.0',
-                            style: TextStyle(
-                                color: RastaTheme.textPrimary,
-                                fontWeight: FontWeight.w600,
-                            ),
-                        ),
-                        SizedBox(height: 8),
-                        Text(
-                            'Мессенджер для команды "Отряд Боба Марли".',
-                            style: TextStyle(color: RastaTheme.textSecondary),
-                        ),
-                        SizedBox(height: 12),
-                        Text(
-                            'Двигай. Вдохновляй.',
-                            style: TextStyle(
-                                color: RastaTheme.rastaYellow,
-                                fontStyle: FontStyle.italic,
-                            ),
-                        ),
-                    ],
-                ),
-                actions: [
-                    TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text(
-                            'Закрыть',
-                            style: TextStyle(color: RastaTheme.rastaYellow),
-                        ),
-                    ),
-                ],
-            ),
-        );
-    }
-
-    Future<void> _confirmLogout(BuildContext context) async {
+    Future<void> _clearCache(BuildContext context) async {
         final confirmed = await showDialog<bool>(
             context: context,
             builder: (_) => AlertDialog(
                 backgroundColor: RastaTheme.surface,
                 title: const Text(
-                    'Выход',
+                    'Очистить кэш?',
                     style: TextStyle(color: RastaTheme.textPrimary),
                 ),
                 content: const Text(
-                    'Вы уверены, что хотите выйти?',
+                    'Кэшированные сообщения и картинки будут удалены. '
+                    'При следующем открытии чата данные загрузятся заново.',
                     style: TextStyle(color: RastaTheme.textSecondary),
                 ),
                 actions: [
@@ -270,8 +203,8 @@ class SettingsScreen extends StatelessWidget {
                     TextButton(
                         onPressed: () => Navigator.pop(context, true),
                         child: const Text(
-                            'Выйти',
-                            style: TextStyle(color: RastaTheme.error),
+                            'Очистить',
+                            style: TextStyle(color: RastaTheme.rastaYellow),
                         ),
                     ),
                 ],
@@ -279,7 +212,13 @@ class SettingsScreen extends StatelessWidget {
         );
 
         if (confirmed == true && context.mounted) {
-            Navigator.of(context).popUntil((route) => route.isFirst);
+            ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                    content: Text('Кэш очищен (заглушка)'),
+                    backgroundColor: RastaTheme.success,
+                    behavior: SnackBarBehavior.floating,
+                ),
+            );
         }
     }
 }
