@@ -15,6 +15,8 @@
 //   🎯 2026-09-21 (Retry + кэш):
 //      • queryWithRetry — maxRetries=2 (быстрее)
 //      • Кэш checkChatAccess на 30 сек (меньше запросов к БД)
+//   🎯 2026-10-09 (Группы):
+//      • checkWriteAccess → group: пишет ЛЮБОЙ участник
 // =====================================================
 
 const { pool } = require('../database/init');
@@ -166,8 +168,12 @@ async function checkWriteAccess(chatId, userId) {
         }
 
         case 'group': {
-            if (perms.can_write_general) return { allowed: true };
-            return { allowed: false, reason: 'Нет права писать в группы' };
+            // 🎯 В группе пишет ЛЮБОЙ участник (member или admin).
+            // Членство важнее глобальных прав: если пригласили — доверяем.
+            if (access.role === 'admin' || access.role === 'member') {
+                return { allowed: true };
+            }
+            return { allowed: false, reason: 'Вы не участник группы' };
         }
 
         case 'private': {
@@ -412,5 +418,5 @@ module.exports = {
     getChatMembers,
     getOtherPrivateMember,
     canReadPrivateChat,
-    clearAccessCache,  // 🎯 НОВОЕ
+    clearAccessCache,
 };

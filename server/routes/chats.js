@@ -7,6 +7,7 @@
 //   🎯 2026-09-19 (Шаг 6): PUT/DELETE/:id, join, members/bulk
 //   🎯 2026-09-19: console.log для диагностики в stdout (Onreza показывает)
 //   🎯 2026-10-09: other_user_avatar, other_user_id для личных чатов
+//   🎯 2026-10-09 (Группы): создание группы — любому подтверждённому
 // =====================================================
 
 const express = require('express');
@@ -120,6 +121,9 @@ router.get('/', authMiddleware, async (req, res) => {
 // =====================================================
 // ➕ POST /api/chats
 // =====================================================
+// 🎯 Группа: любой подтверждённый пользователь может создать.
+// 🎯 Канал: только тот, у кого есть can_create_feed (Боец+).
+// =====================================================
 router.post('/', authMiddleware, async (req, res) => {
     try {
         const {
@@ -143,7 +147,9 @@ router.post('/', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'Название чата максимум 100 символов' });
         }
 
+        // 🎯 Проверка прав на создание
         if (type === 'channel') {
+            // Канал — только Боец+ (can_create_feed)
             const canCreate = await pool.query(`
                 SELECT 1 FROM user_roles ur
                 INNER JOIN roles r ON r.id = ur.role_id
@@ -153,6 +159,18 @@ router.post('/', authMiddleware, async (req, res) => {
 
             if (canCreate.rows.length === 0) {
                 return res.status(403).json({ error: 'Недостаточно прав для создания канала' });
+            }
+        } else {
+            // 🎯 Группа — любой подтверждённый пользователь
+            const isApproved = await pool.query(
+                'SELECT is_approved FROM users WHERE id = $1',
+                [req.user.id]
+            );
+
+            if (isApproved.rows.length === 0 || !isApproved.rows[0].is_approved) {
+                return res.status(403).json({
+                    error: 'Только подтверждённые пользователи могут создавать группы',
+                });
             }
         }
 

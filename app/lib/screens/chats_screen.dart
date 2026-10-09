@@ -9,6 +9,7 @@
 // 🎯 ЭТАП C.5: долгий тап → меню + свайп влево → удалить
 // 🎯 ОПТИМИЗАЦИЯ: Selector вместо Consumer
 // 🎯 АВАТАРЫ: показ аватара собеседника в личных чатах
+// 🎯 ГРУППЫ: меню «+» → Создать канал / Создать группу
 // =====================================================
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -24,6 +25,7 @@ import '../themes/rasta_theme.dart';
 import '../utils/app_logger.dart';
 import 'chat_screen.dart';
 import 'create_channel_screen.dart';
+import 'create_group_screen.dart';
 
 class ChatsScreen extends StatefulWidget {
     const ChatsScreen({super.key});
@@ -154,6 +156,113 @@ class _ChatsScreenState extends State<ChatsScreen> {
     }
 
     // ============================================
+    // ➕ СОЗДАНИЕ: ВЫБОР КАНАЛ / ГРУППА
+    // ============================================
+    Future<void> _openCreateMenu() async {
+        final choice = await showModalBottomSheet<String>(
+            context: context,
+            backgroundColor: RastaTheme.surface,
+            shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            builder: (_) => SafeArea(
+                child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                        const SizedBox(height: 8),
+                        Container(
+                            width: 40,
+                            height: 4,
+                            decoration: BoxDecoration(
+                                color: RastaTheme.textMuted
+                                    .withValues(alpha: 0.4),
+                                borderRadius: BorderRadius.circular(2),
+                            ),
+                        ),
+                        const SizedBox(height: 16),
+                        const Text(
+                            'Создать',
+                            style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                color: RastaTheme.textPrimary,
+                            ),
+                        ),
+                        const SizedBox(height: 8),
+
+                        // ─────────────────────────────────
+                        // 📢 СОЗДАТЬ КАНАЛ
+                        // ─────────────────────────────────
+                        ListTile(
+                            leading: const Icon(
+                                Icons.campaign_outlined,
+                                color: RastaTheme.rastaYellow,
+                                size: 28,
+                            ),
+                            title: const Text(
+                                'Канал',
+                                style: TextStyle(
+                                    color: RastaTheme.textPrimary,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                ),
+                            ),
+                            subtitle: const Text(
+                                'Пишут только админы. Остальные читают',
+                                style: TextStyle(
+                                    color: RastaTheme.textMuted,
+                                    fontSize: 13,
+                                ),
+                            ),
+                            onTap: () => Navigator.pop(context, 'channel'),
+                        ),
+
+                        // ─────────────────────────────────
+                        // 👥 СОЗДАТЬ ГРУППУ
+                        // ─────────────────────────────────
+                        ListTile(
+                            leading: const Icon(
+                                Icons.groups_outlined,
+                                color: RastaTheme.rastaYellow,
+                                size: 28,
+                            ),
+                            title: const Text(
+                                'Группа',
+                                style: TextStyle(
+                                    color: RastaTheme.textPrimary,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                ),
+                            ),
+                            subtitle: const Text(
+                                'Пишут все участники',
+                                style: TextStyle(
+                                    color: RastaTheme.textMuted,
+                                    fontSize: 13,
+                                ),
+                            ),
+                            onTap: () => Navigator.pop(context, 'group'),
+                        ),
+
+                        const SizedBox(height: 8),
+                    ],
+                ),
+            ),
+        );
+
+        if (!mounted || choice == null) return;
+
+        switch (choice) {
+            case 'channel':
+                await _openCreateChannel();
+                break;
+            case 'group':
+                await _openCreateGroup();
+                break;
+        }
+    }
+
+    // ============================================
     // 📢 СОЗДАНИЕ КАНАЛА
     // ============================================
     Future<void> _openCreateChannel() async {
@@ -161,6 +270,30 @@ class _ChatsScreenState extends State<ChatsScreen> {
             context,
             MaterialPageRoute(
                 builder: (_) => const CreateChannelScreen(),
+            ),
+        );
+
+        if (!mounted) return;
+
+        if (created != null) {
+            final chatProvider =
+                Provider.of<ChatProvider>(context, listen: false);
+            await chatProvider.loadChats();
+
+            if (!mounted) return;
+
+            await _openChat(created);
+        }
+    }
+
+    // ============================================
+    // 👥 СОЗДАНИЕ ГРУППЫ
+    // ============================================
+    Future<void> _openCreateGroup() async {
+        final created = await Navigator.push<Chat>(
+            context,
+            MaterialPageRoute(
+                builder: (_) => const CreateGroupScreen(),
             ),
         );
 
@@ -504,7 +637,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
                         onPressed: _toggleSearch,
                     ),
                     if (auth.canCreateFeed && !_isSearching)
-                        _buildCreateChannelButton(),
+                        _buildCreateMenuButton(),
                 ],
             ),
             body: Selector<ChatProvider, _ChatsState>(
@@ -757,13 +890,13 @@ class _ChatsScreenState extends State<ChatsScreen> {
     }
 
     // ============================================
-    // ➕ КНОПКА «СОЗДАТЬ КАНАЛ»
+    // ➕ КНОПКА «СОЗДАТЬ»
     // ============================================
-    Widget _buildCreateChannelButton() {
+    Widget _buildCreateMenuButton() {
         return IconButton(
             icon: const Icon(Icons.add_circle_outline, size: 26),
-            tooltip: 'Создать канал',
-            onPressed: _openCreateChannel,
+            tooltip: 'Создать чат',
+            onPressed: _openCreateMenu,
         );
     }
 
@@ -1153,11 +1286,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
     // =====================================================
     // 🎨 АВАТАР ЧАТА
     // =====================================================
-    // 🎯 Личный чат + есть аватар собеседника → CachedNetworkImage
-    // 🎯 Иначе → градиент + эмодзи (как было)
-    // =====================================================
     Widget _buildChatAvatar(Chat chat, {required double size}) {
-        // Личный чат с аватаром собеседника
         if (chat.isPrivateChat &&
             chat.otherUserAvatar != null &&
             chat.otherUserAvatar!.isNotEmpty) {
@@ -1193,7 +1322,6 @@ class _ChatsScreenState extends State<ChatsScreen> {
             );
         }
 
-        // Все остальные чаты — градиент + эмодзи
         return _buildChatAvatarFallback(chat, size);
     }
 

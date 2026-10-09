@@ -12,6 +12,7 @@
 // 🎯 FIX (web upload): sendFile принимает XFile вместо String
 // 🎯 ОПТИМИЗАЦИЯ: кэш сообщений (_messagesCache) + время последней
 //    загрузки — повторное открытие чата мгновенно.
+// 🎯 ГРУППЫ: createGroup + правки canWriteToActiveChat для group
 // =====================================================
 
 import 'dart:async';
@@ -61,8 +62,6 @@ class ChatProvider extends ChangeNotifier {
     bool _isLoadingMore = false;
 
     // 🎯 ОПТИМИЗАЦИЯ: кэш сообщений по chatId
-    // Хранит последние N сообщений + время загрузки.
-    // При повторном открытии чата — показываем сразу, обновляем в фоне.
     final Map<int, _CachedMessages> _messagesCache = {};
     static const Duration _cacheTtl = Duration(minutes: 2);
 
@@ -127,7 +126,6 @@ class ChatProvider extends ChangeNotifier {
     // 🎯 ОПТИМИЗАЦИЯ: КЭШ СООБЩЕНИЙ
     // =====================================================
 
-    /// Возвращает кэшированные сообщения для чата (если есть и не протухли).
     List<Message>? getCachedMessages(int chatId) {
         final cached = _messagesCache[chatId];
         if (cached == null) return null;
@@ -138,7 +136,6 @@ class ChatProvider extends ChangeNotifier {
         return cached.messages;
     }
 
-    /// Сохраняет сообщения в кэш.
     void _cacheMessages(int chatId, List<Message> messages) {
         _messagesCache[chatId] = _CachedMessages(
             messages: List.from(messages),
@@ -146,12 +143,10 @@ class ChatProvider extends ChangeNotifier {
         );
     }
 
-    /// Очищает кэш для конкретного чата (например, при новом сообщении).
     void _invalidateCache(int chatId) {
         _messagesCache.remove(chatId);
     }
 
-    /// Очищает весь кэш.
     void clearCache() {
         _messagesCache.clear();
         AppLogger.info('🗑️ Кэш сообщений очищен');
@@ -431,7 +426,6 @@ class ChatProvider extends ChangeNotifier {
             _hasMoreOld = true;
             _isLoadingMore = false;
 
-            // 🎯 ОПТИМИЗАЦИЯ: показываем кэш сразу, если есть
             final cached = getCachedMessages(chatId);
             if (cached != null && cached.isNotEmpty) {
                 _messages = List.from(cached);
@@ -451,7 +445,6 @@ class ChatProvider extends ChangeNotifier {
 
             notifyListeners();
 
-            // 🎯 Загружаем свежие сообщения (в фоне, если есть кэш)
             await _loadMessages(chatId);
         } catch (e) {
             AppLogger.error('Ошибка открытия чата', e);
@@ -535,6 +528,76 @@ class ChatProvider extends ChangeNotifier {
             return created;
         } catch (e) {
             AppLogger.error('Ошибка создания канала', e);
+            _chatsError = 'Ошибка сети';
+            notifyListeners();
+            return null;
+        }
+    }
+
+    // =====================================================
+    // 👥 ГРУППЫ: СОЗДАНИЕ
+    // =====================================================
+    // 🎯 Группа — как канал, но:
+    //   • type: 'group' (вместо 'channel')
+    //   • без isPrivate (всегда false — только по приглашению)
+    //   • без emoji (у группы нет иконки-эмодзи)
+    //   • писать может ЛЮБОЙ участник (см. canWriteToActiveChat)
+    // =====================================================
+    Future<Chat?> createGroup({
+        required String name,
+        String? description,
+        List<int> members = const [],
+    }) async {
+        AppLogger.info('👥 Создание группы: $name');
+
+        try {
+            final response = await ApiService.createChat(
+                type: 'group',
+                name: name,
+                description: description,
+                isPrivate: false,
+                emoji: null,
+                members: members,
+            );
+
+            if (!response.isSuccess || response.data == null) {
+                AppLogger.warn('Ошибка создания группы: ${response.error}');
+                _chatsError = response.error ?? 'Ошибка создания';
+                notifyListeners();
+                return null;
+            }
+
+            final chatJson = response.data!['chat'] as Map<String, dynamic>?;
+            if (chatJson == null) {
+                AppLogger.warn('Ошибка: нет chat в ответе сервера');
+                _chatsError = 'Некорректный ответ сервера';
+                notifyListeners();
+                return null;
+            }
+
+            final created = Chat.fromJson({
+                ...chatJson,
+                'is_member': true,
+                'my_role': 'admin',
+                'members_count': members.length + 1,
+                'unread_count': 0,
+            });
+
+            _chats.removeWhere((c) => c.id == created.id);
+            _chats.insert(0, created);
+            _sortChats();
+            notifyListeners();
+
+            // ignore: unawaited_futures
+            loadChats();
+
+            AppLogger.success(
+                'Группа создана: #${created.id} '
+                '(участников: ${created.membersCount})'
+            );
+            return created;
+        } catch (e) {
+            AppLogger.error('Ошибка создания группы', e);
             _chatsError = 'Ошибка сети';
             notifyListeners();
             return null;
@@ -767,7 +830,6 @@ class ChatProvider extends ChangeNotifier {
     // =====================================================
 
     Future<void> _loadMessages(int chatId) async {
-        // Если уже есть кэш — не показываем лоадер
         final hasCache = _messages.isNotEmpty;
         if (!hasCache) {
             _isLoadingMessages = true;
@@ -797,7 +859,6 @@ class ChatProvider extends ChangeNotifier {
                     return msg.copyWith(isRead: isRead);
                 }).toList();
 
-                // 🎯 ОПТИМИЗАЦИЯ: сохраняем в кэш
                 _cacheMessages(chatId, _messages);
 
                 AppLogger.success(
@@ -874,7 +935,6 @@ class ChatProvider extends ChangeNotifier {
 
                 _messages = [...fresh, ..._messages];
 
-                // 🎯 ОПТИМИЗАЦИЯ: обновляем кэш после подгрузки
                 if (_activeChat != null) {
                     _cacheMessages(_activeChat!.id, _messages);
                 }
@@ -960,8 +1020,10 @@ class ChatProvider extends ChangeNotifier {
         }
 
         if (chatType == 'group') {
-            if (user.canWriteGeneral) return null;
-            return 'Нет права писать в группы';
+            // 🎯 В группе пишет ЛЮБОЙ участник (member или admin).
+            // Членство важнее глобальных прав: если пригласили — доверяем.
+            if (_activeChat!.isMember) return null;
+            return 'Вы не участник группы';
         }
 
         if (chatType == 'private') {
@@ -1007,8 +1069,6 @@ class ChatProvider extends ChangeNotifier {
         }
     }
 
-    /// 🎯 FIX (web upload): принимает XFile вместо String.
-    /// XFile.readAsBytes() работает и на web, и на мобильных.
     Future<bool> sendFile(XFile file, String type) async {
         if (_activeChat == null) {
             AppLogger.warn('Нет активного чата');
@@ -1310,7 +1370,6 @@ class ChatProvider extends ChangeNotifier {
                 final exists = _messages.any((m) => m.id == message.id);
                 if (!exists) {
                     _messages.add(message);
-                    // 🎯 ОПТИМИЗАЦИЯ: обновляем кэш
                     _cacheMessages(chatId, _messages);
                     notifyListeners();
                     markAsRead();
