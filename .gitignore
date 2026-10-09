@@ -181,9 +181,14 @@ docker-compose.override.yml
 # Sentry
 .sentryclirc
 
-# Firebase (создадим позже)
+# Firebase
+# 🎯 google-services.json — НЕ секрет, коммитим (нужен для сборки на Onreza)
 google-services.json
+!app/android/app/google-services.json
+
+# 🎯 GoogleService-Info.plist — для iOS (когда добавим)
 GoogleService-Info.plist
+
 firebase-debug.log
 .firebase/
 firebase-debug.log*
