@@ -9,6 +9,7 @@
 // 🎯 ЭТАП D.2: RepaintBoundary для изоляции перерисовки
 // 🎯 ГОЛОСОВЫЕ: плеер с Play/Pause, таймер, простая волна
 // 🎯 ПРОСМОТР ФОТО: InstaImageViewer (зум + свайп вниз)
+// 🎯 ПРОФИЛЬ: тап по имени отправителя → onSenderTap
 // =====================================================
 
 import 'dart:ui' as ui;
@@ -32,6 +33,9 @@ class MessageBubble extends StatelessWidget {
     final VoidCallback? onReply;
     final VoidCallback? onReplyTap;
 
+    // 🎯 ПРОФИЛЬ: тап по имени отправителя
+    final VoidCallback? onSenderTap;
+
     const MessageBubble({
         super.key,
         required this.message,
@@ -40,6 +44,7 @@ class MessageBubble extends StatelessWidget {
         this.replyTo,
         this.onReply,
         this.onReplyTap,
+        this.onSenderTap,
     });
 
     @override
@@ -107,13 +112,17 @@ class MessageBubble extends StatelessWidget {
                                             padding: const EdgeInsets.only(
                                                 bottom: 4,
                                             ),
-                                            child: Text(
-                                                message.senderName!,
-                                                style: const TextStyle(
-                                                    fontSize: 12,
-                                                    fontWeight: FontWeight.w700,
-                                                    color: RastaTheme
-                                                        .rastaYellow,
+                                            child: GestureDetector(
+                                                onTap: onSenderTap,
+                                                child: Text(
+                                                    message.senderName!,
+                                                    style: const TextStyle(
+                                                        fontSize: 12,
+                                                        fontWeight:
+                                                            FontWeight.w700,
+                                                        color: RastaTheme
+                                                            .rastaYellow,
+                                                    ),
                                                 ),
                                             ),
                                         ),

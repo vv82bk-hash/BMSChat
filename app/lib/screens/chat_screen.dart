@@ -16,6 +16,7 @@
 // 🎯 FIX (web upload): sendFile принимает XFile, а не path
 // 🎯 FIX (дубли + анимация): openChat перенесён сюда из ChatsScreen
 // 🎯 ГОЛОСОВЫЕ: запись OGG/Opus, отправка, UI записи
+// 🎯 ПРОФИЛЬ: тап по имени отправителя → UserProfileScreen
 // =====================================================
 
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
@@ -35,6 +36,7 @@ import '../widgets/animated_message_wrapper.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/reaction_picker.dart';
 import 'channel_settings_screen.dart';
+import 'user_profile_screen.dart';
 import 'users_screen.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -411,7 +413,6 @@ class _ChatScreenState extends State<ChatScreen> {
             _showInfo('Загрузка...');
 
             final chat = Provider.of<ChatProvider>(context, listen: false);
-            // 🎯 Передаём XFile напрямую — .path на web не работает
             final success = await chat.sendFile(image, 'image');
 
             if (!mounted) return;
@@ -434,7 +435,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
     /// Старт записи. Вызывается по тапу на иконку микрофона.
     Future<void> _startVoiceRecording() async {
-        // Web не поддерживает запись в OGG/Opus через пакет record
         if (kIsWeb) {
             _showInfo('Запись голосовых доступна только в мобильном приложении');
             return;
@@ -483,7 +483,6 @@ class _ChatScreenState extends State<ChatScreen> {
             return;
         }
 
-        // Слишком короткая запись (как в Telegram — минимум ~1 сек)
         if (result.seconds < 1) {
             _showInfo('Слишком короткая запись');
             return;
@@ -650,6 +649,16 @@ class _ChatScreenState extends State<ChatScreen> {
             duration: const Duration(milliseconds: 400),
             curve: Curves.easeOutCubic,
             alignment: 0.3,
+        );
+    }
+
+    /// 🎯 ПРОФИЛЬ: открыть чужой профиль
+    void _openUserProfile(int userId) {
+        Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (_) => UserProfileScreen(userId: userId),
+            ),
         );
     }
 
@@ -1181,6 +1190,11 @@ class _ChatScreenState extends State<ChatScreen> {
                                                                         ? () => _scrollToMessage(
                                                                             replyTo.id)
                                                                         : null,
+                                                                    onSenderTap: !isOwn
+                                                                        ? () => _openUserProfile(
+                                                                            message
+                                                                                .senderId)
+                                                                        : null,
                                                                 ),
                                                             ),
                                                         ],
@@ -1247,7 +1261,6 @@ class _ChatScreenState extends State<ChatScreen> {
                         if (chat.replyToMessage != null)
                             _buildReplyPreview(chat),
 
-                        // 🎤 Если идёт запись — показываем панель записи вместо поля ввода
                         if (_isRecording)
                             _buildRecordingPanel()
                         else ...[
@@ -1291,7 +1304,6 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             child: Row(
                 children: [
-                    // 🔴 Индикатор + таймер
                     Container(
                         width: 12,
                         height: 12,
@@ -1313,7 +1325,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
                     const SizedBox(width: 12),
 
-                    // Подсказка
                     const Expanded(
                         child: Text(
                             'Идёт запись...',
@@ -1324,7 +1335,6 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                     ),
 
-                    // ❌ Отмена
                     IconButton(
                         icon: const Icon(Icons.close, size: 26),
                         color: RastaTheme.textMuted,
@@ -1334,7 +1344,6 @@ class _ChatScreenState extends State<ChatScreen> {
                             : _cancelVoiceRecording,
                     ),
 
-                    // ✅ Отправить
                     Container(
                         decoration: BoxDecoration(
                             shape: BoxShape.circle,
