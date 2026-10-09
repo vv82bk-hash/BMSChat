@@ -4,6 +4,8 @@
 // Создаёт таблицу uploaded_files для хранения
 // файлов прямо в БД (BYTEA).
 //
+// 🎤 Добавлена миграция duration для голосовых.
+//
 // ЗАПУСК:
 //   npm run migrate
 // =====================================================
@@ -77,6 +79,18 @@ async function runMigrations() {
         }
 
         // ─────────────────────────────────────────
+        // 3. 🎤 Колонка duration в uploaded_files
+        // ─────────────────────────────────────────
+        console.log('');
+        console.log('📦 Миграция: uploaded_files.duration');
+
+        await pool.query(`
+            ALTER TABLE uploaded_files
+            ADD COLUMN IF NOT EXISTS duration INTEGER
+        `);
+        console.log('   ✅ Колонка duration добавлена (или уже была)');
+
+        // ─────────────────────────────────────────
         // Проверка
         // ─────────────────────────────────────────
         const tables = await pool.query(`
@@ -91,6 +105,20 @@ async function runMigrations() {
         tables.rows.forEach((t) => {
             console.log(`   • ${t.table_name}`);
         });
+
+        // Проверка колонки duration
+        const hasDuration = await pool.query(`
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_name = 'uploaded_files'
+              AND column_name = 'duration'
+        `);
+
+        if (hasDuration.rows.length > 0) {
+            console.log('');
+            console.log('🎤 Колонка uploaded_files.duration:');
+            console.log(`   • Тип: ${hasDuration.rows[0].data_type}`);
+        }
 
         console.log('');
         console.log('✅ МИГРАЦИИ ЗАВЕРШЕНЫ');

@@ -3,6 +3,7 @@
 // =====================================================
 // POST /api/upload
 // Файл сохраняется прямо в БД (колонка file_data).
+// 🎤 ГОЛОСОВЫЕ: вычисляем duration через music-metadata
 // =====================================================
 
 const express = require('express');
@@ -10,6 +11,7 @@ const router = express.Router();
 const multer = require('multer');
 const path = require('path');
 const crypto = require('crypto');
+const mm = require('music-metadata');
 
 const { authMiddleware } = require('../middleware/auth');
 const { pool } = require('../database/init');
@@ -17,9 +19,6 @@ const logger = require('../utils/logger');
 
 // =====================================================
 // 💾 ХРАНИЛИЩЕ MULTER — в памяти!
-// =====================================================
-// ВАЖНО: storage = memoryStorage, а не diskStorage.
-// Файл попадает в req.file.buffer и потом пишется в БД.
 // =====================================================
 const storage = multer.memoryStorage();
 
@@ -58,8 +57,31 @@ const fileFilter = (_req, file, cb) => {
 const upload = multer({
     storage,
     fileFilter,
-    limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+    limits: { fileSize: 10 * 1024 * 1024 },
 });
+
+// =====================================================
+// 🎤 ВЫЧИСЛЕНИЕ ДЛИТЕЛЬНОСТИ АУДИО
+// =====================================================
+// Возвращает секунды (int) или null при ошибке.
+async function extractAudioDuration(buffer, mimeType) {
+    try {
+        const metadata = await mm.parseBuffer(buffer, { mimeType });
+        const duration = metadata.format.duration;
+
+        if (!duration || !isFinite(duration)) {
+            return null;
+        }
+
+        return Math.round(duration);
+    } catch (err) {
+        logger.warn('Не удалось определить длительность аудио', {
+            error: err.message,
+            mimeType,
+        });
+        return null;
+    }
+}
 
 // =====================================================
 // 📤 POST /api/upload
@@ -104,6 +126,21 @@ router.post('/', authMiddleware, (req, res) => {
             }
 
             // ─────────────────────────────────────────
+            // 🎤 Длительность для аудио
+            // ─────────────────────────────────────────
+            let duration = null;
+            if (fileType === 'voice') {
+                duration = await extractAudioDuration(
+                    req.file.buffer,
+                    req.file.mimetype,
+                );
+                logger.info('Длительность аудио определена', {
+                    name: req.file.originalname,
+                    duration,
+                });
+            }
+
+            // ─────────────────────────────────────────
             // Сохраняем файл в БД (BYTEA)
             // ─────────────────────────────────────────
             const fileId = crypto.randomBytes(16).toString('hex');
@@ -111,10 +148,10 @@ router.post('/', authMiddleware, (req, res) => {
             const result = await pool.query(`
                 INSERT INTO uploaded_files (
                     id, user_id, file_data, file_name, file_size,
-                    mime_type, file_type, created_at
+                    mime_type, file_type, duration, created_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-                RETURNING id, file_name, file_size, mime_type, file_type
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+                RETURNING id, file_name, file_size, mime_type, file_type, duration
             `, [
                 fileId,
                 req.user.id,
@@ -123,6 +160,7 @@ router.post('/', authMiddleware, (req, res) => {
                 req.file.size,
                 req.file.mimetype,
                 fileType,
+                duration,
             ]);
 
             const saved = result.rows[0];
@@ -133,6 +171,7 @@ router.post('/', authMiddleware, (req, res) => {
                 name: saved.file_name,
                 size: saved.file_size,
                 type: saved.file_type,
+                duration: saved.duration,
             });
 
             res.status(201).json({
@@ -142,6 +181,7 @@ router.post('/', authMiddleware, (req, res) => {
                 file_size: saved.file_size,
                 mime_type: saved.mime_type,
                 file_type: saved.file_type,
+                duration: saved.duration,  // 🎤 в секундах
             });
         } catch (error) {
             logger.error('Ошибка обработки загрузки', error);
