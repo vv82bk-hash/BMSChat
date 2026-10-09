@@ -19,6 +19,7 @@
 // 🎯 ПРОФИЛЬ: тап по имени отправителя → UserProfileScreen
 // 🎯 ГРУППЫ: настройки группы + выход из группы
 // 🎯 MUTE: пункт «Отключить/Включить уведомления»
+// 🎯 ИНФО: переход на ChatInfoScreen
 // =====================================================
 
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
@@ -38,6 +39,7 @@ import '../widgets/animated_message_wrapper.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/reaction_picker.dart';
 import 'channel_settings_screen.dart';
+import 'chat_info_screen.dart';
 import 'group_settings_screen.dart';
 import 'user_profile_screen.dart';
 import 'users_screen.dart';
@@ -831,6 +833,16 @@ class _ChatScreenState extends State<ChatScreen> {
         }
     }
 
+    /// 🎯 Открыть экран информации о чате
+    void _openChatInfo(Chat chat) {
+        Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (_) => ChatInfoScreen(chat: chat),
+            ),
+        );
+    }
+
     Future<void> _leaveChat(Chat chat) async {
         final confirmed = await showDialog<bool>(
             context: context,
@@ -1061,7 +1073,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 _openUsers();
                 break;
             case 'info':
-                _showInfo('Информация — скоро');
+                _openChatInfo(chat);
                 break;
             case 'search':
                 _showInfo('Поиск — скоро');
