@@ -6,6 +6,8 @@
 //   🔒 2026-09-19 — запрет смены роли для неподтверждённых
 //   🔵 2026-09-19 — при роли «Новобранец» is_approved = false
 //   👤 2026-10-09 — PATCH /api/users/me (смена имени и аватара)
+//   🔔 2026-10-09 — POST /api/users/me/fcm-token (сохранение FCM-токена)
+//   🔕 2026-10-09 — DELETE /api/users/me/fcm-token (удаление при logout)
 // =====================================================
 
 const express = require('express');
@@ -129,16 +131,10 @@ async function unapproveUser(userId) {
 // =====================================================
 // 👤 PATCH /api/users/me
 // =====================================================
-// Обновляет профиль текущего пользователя.
-// Принимает: display_name (string), avatar (string).
-// ВАЖНО: этот роут должен быть ДО /:id, иначе Express
-//        примет "me" за ID пользователя.
-// =====================================================
 router.patch('/me', authMiddleware, async (req, res) => {
     try {
         const { display_name, avatar } = req.body;
 
-        // Собираем только те поля, которые пришли
         const updates = [];
         const values = [];
         let paramIndex = 1;
@@ -166,9 +162,7 @@ router.patch('/me', authMiddleware, async (req, res) => {
         }
 
         if (updates.length === 0) {
-            return res.status(400).json({
-                error: 'Нечего обновлять',
-            });
+            return res.status(400).json({ error: 'Нечего обновлять' });
         }
 
         values.push(req.user.id);
@@ -207,6 +201,60 @@ router.patch('/me', authMiddleware, async (req, res) => {
         });
     } catch (error) {
         logger.error('Ошибка PATCH /users/me', error);
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
+
+// =====================================================
+// 🔔 POST /api/users/me/fcm-token
+// =====================================================
+router.post('/me/fcm-token', authMiddleware, async (req, res) => {
+    try {
+        const { token } = req.body;
+
+        if (!token || typeof token !== 'string') {
+            return res.status(400).json({ error: 'token обязателен' });
+        }
+
+        if (token.length > 255) {
+            return res.status(400).json({ error: 'token слишком длинный' });
+        }
+
+        await pool.query(
+            'UPDATE users SET fcm_token = $1 WHERE id = $2',
+            [token, req.user.id],
+        );
+
+        logger.success('FCM-токен сохранён', {
+            userId: req.user.id,
+            tokenPrefix: token.substring(0, 20),
+        });
+
+        res.json({ message: 'FCM-токен сохранён' });
+    } catch (error) {
+        logger.error('Ошибка сохранения FCM-токена', error);
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
+
+// =====================================================
+// 🔕 DELETE /api/users/me/fcm-token
+// =====================================================
+// Обнуляет FCM-токен при выходе из аккаунта,
+// чтобы push не приходил на устройство вышедшего.
+// =====================================================
+router.delete('/me/fcm-token', authMiddleware, async (req, res) => {
+    try {
+        await pool.query(
+            'UPDATE users SET fcm_token = NULL WHERE id = $1',
+            [req.user.id],
+        );
+
+        logger.info('FCM-токен удалён', { userId: req.user.id });
+
+        res.json({ message: 'FCM-токен удалён' });
+    } catch (error) {
+        logger.error('Ошибка удаления FCM-токена', error);
         res.status(500).json({ error: 'Ошибка сервера' });
     }
 });

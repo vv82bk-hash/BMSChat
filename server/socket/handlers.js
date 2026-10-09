@@ -2,6 +2,7 @@
 // 🎯 BMSChat — ОБРАБОТЧИКИ SOCKET.IO (PostgreSQL)
 // =====================================================
 // 🎯 2026-09-21: queryWithRetry — защита от сбоев Supavisor
+// 🎯 2026-10-09: FCM — push офлайн-участникам
 // =====================================================
 
 const { pool } = require('../database/init');
@@ -10,6 +11,7 @@ const {
     checkWriteAccess,
     getChatMemberIds,
 } = require('../utils/chatAccess');
+const fcm = require('../utils/fcm');
 const logger = require('../utils/logger');
 
 // Хранилища (в памяти)
@@ -337,6 +339,10 @@ async function handleSendMessage(io, socket, user, data) {
             tempId,
         });
 
+        // 🎯 FCM: push офлайн-участникам (fire-and-forget)
+        sendPushToOfflineMembers(io, chatId, user, message)
+            .catch((err) => logger.error('Ошибка sendPushToOfflineMembers', err));
+
         logger.logMessage(user.id, chatId, text?.length || 0);
     } catch (error) {
         logger.error('Ошибка отправки сообщения', error, {
@@ -344,6 +350,63 @@ async function handleSendMessage(io, socket, user, data) {
             chatId,
         });
         socket.emit('error', { message: 'Ошибка отправки' });
+    }
+}
+
+// =====================================================
+// 🔔 FCM: PUSH ОФЛАЙН-УЧАСТНИКАМ
+// =====================================================
+// 1. Берём участников чата с fcm_token (кроме отправителя).
+// 2. Фильтруем: только те, кто НЕ в onlineUsers.
+// 3. Отправляем push через fcm.sendToTokens.
+// =====================================================
+async function sendPushToOfflineMembers(io, chatId, sender, message) {
+    try {
+        // 1. Участники чата с fcm_token (кроме отправителя)
+        const result = await queryWithRetry(`
+            SELECT u.id, u.fcm_token
+            FROM chat_members cm
+            INNER JOIN users u ON u.id = cm.user_id
+            WHERE cm.chat_id = $1
+              AND cm.user_id != $2
+              AND u.fcm_token IS NOT NULL
+        `, [chatId, sender.id], 'sendPushToOfflineMembers:members');
+
+        if (result.rows.length === 0) return;
+
+        // 2. Фильтруем офлайн
+        const offlineTokens = result.rows
+            .filter((row) => !onlineUsers.has(row.id))
+            .map((row) => row.fcm_token)
+            .filter((token) => token && token.length > 0);
+
+        if (offlineTokens.length === 0) return;
+
+        // 3. Формируем текст уведомления
+        const senderName = sender.display_name || sender.username || 'Кто-то';
+        const bodyText = message.text || 'Новое сообщение';
+
+        // 4. Отправляем
+        await fcm.sendToTokens(offlineTokens, {
+            title: senderName,
+            body: bodyText.length > 100
+                ? `${bodyText.substring(0, 100)}...`
+                : bodyText,
+            chatId,
+            senderName,
+            type: 'message',
+        });
+
+        logger.info('FCM push офлайн-участникам', {
+            chatId,
+            senderId: sender.id,
+            offlineCount: offlineTokens.length,
+        });
+    } catch (error) {
+        logger.error('Ошибка sendPushToOfflineMembers', error, {
+            chatId,
+            senderId: sender.id,
+        });
     }
 }
 

@@ -5,9 +5,10 @@
 //   • Инициализация Firebase Messaging
 //   • Инициализация flutter_local_notifications (foreground)
 //   • Запрос разрешения на уведомления (Android 13+)
-//   • Получение FCM-токена (отправка на сервер — позже)
+//   • Получение FCM-токена (отправка на сервер — в AuthProvider)
 //   • Показ локального уведомления при foreground-push
 //   • Обработка тапа по уведомлению (переход в чат)
+// 🎯 Обновление токена: при onTokenRefresh — отправка на сервер
 // =====================================================
 
 import 'package:firebase_core/firebase_core.dart';
@@ -16,6 +17,8 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/material.dart' show Color;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'api_service.dart';
 
 /// Фоновый обработчик FCM.
 /// Вызывается, когда приложение свёрнуто/закрыто.
@@ -180,7 +183,21 @@ class NotificationService {
             await prefs.setString('fcm_token', newToken);
             debugPrint('🔑 FCM-токен обновлён');
 
-            // TODO: отправить новый токен на сервер
+            // 🔔 Отправляем новый токен на сервер.
+            // Пользователь может быть ещё не залогинен — тогда
+            // ApiService.sendFcmToken вернёт 401, и мы просто залогируем.
+            try {
+                final response = await ApiService.sendFcmToken(newToken);
+                if (response.isSuccess) {
+                    debugPrint('🔔 Новый FCM-токен отправлен на сервер');
+                } else {
+                    debugPrint(
+                        '⚠️ Не удалось отправить FCM-токен: ${response.error}',
+                    );
+                }
+            } catch (e) {
+                debugPrint('❌ Ошибка отправки FCM-токена: $e');
+            }
         });
     }
 

@@ -5,6 +5,7 @@
 // файлов прямо в БД (BYTEA).
 //
 // 🎤 Добавлена миграция duration для голосовых.
+// 🔔 Добавлена миграция fcm_token для push-уведомлений.
 //
 // ЗАПУСК:
 //   npm run migrate
@@ -91,6 +92,18 @@ async function runMigrations() {
         console.log('   ✅ Колонка duration добавлена (или уже была)');
 
         // ─────────────────────────────────────────
+        // 4. 🔔 Колонка fcm_token в users
+        // ─────────────────────────────────────────
+        console.log('');
+        console.log('📦 Миграция: users.fcm_token');
+
+        await pool.query(`
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS fcm_token VARCHAR(255)
+        `);
+        console.log('   ✅ Колонка fcm_token добавлена (или уже была)');
+
+        // ─────────────────────────────────────────
         // Проверка
         // ─────────────────────────────────────────
         const tables = await pool.query(`
@@ -118,6 +131,20 @@ async function runMigrations() {
             console.log('');
             console.log('🎤 Колонка uploaded_files.duration:');
             console.log(`   • Тип: ${hasDuration.rows[0].data_type}`);
+        }
+
+        // Проверка колонки fcm_token
+        const hasFcmToken = await pool.query(`
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_name = 'users'
+              AND column_name = 'fcm_token'
+        `);
+
+        if (hasFcmToken.rows.length > 0) {
+            console.log('');
+            console.log('🔔 Колонка users.fcm_token:');
+            console.log(`   • Тип: ${hasFcmToken.rows[0].data_type}`);
         }
 
         console.log('');

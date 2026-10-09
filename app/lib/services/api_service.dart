@@ -4,6 +4,7 @@
 // 🎯 ШАГ 8: методы для управления каналами
 // 🎯 FIX (web upload): MultipartFile.fromBytes вместо fromPath
 // 🎯 ПРОФИЛЬ: updateProfile() + _patch()
+// 🎯 FCM: sendFcmToken() + deleteFcmToken()
 // =====================================================
 
 import 'dart:async';
@@ -329,6 +330,45 @@ class ApiService {
             final data = response.data as Map<String, dynamic>;
             final userJson = data['user'] as Map<String, dynamic>;
             return ApiResponse.success(User.fromJson(userJson));
+        }
+
+        return ApiResponse.error(response.error!, statusCode: response.statusCode);
+    }
+
+    // =====================================================
+    // 🔔 ОТПРАВКА FCM-ТОКЕНА НА СЕРВЕР
+    // =====================================================
+    // Сохраняет FCM-токен устройства в БД (привязан к userId).
+    // Нужно для отправки push при новых сообщениях.
+    // =====================================================
+    static Future<ApiResponse<void>> sendFcmToken(String token) async {
+        if (token.isEmpty) {
+            return ApiResponse.error('Пустой FCM-токен', statusCode: 400);
+        }
+
+        final response = await _post(
+            '/users/me/fcm-token',
+            body: {'token': token},
+        );
+
+        if (response.isSuccess) {
+            return ApiResponse.success(null);
+        }
+
+        return ApiResponse.error(response.error!, statusCode: response.statusCode);
+    }
+
+    // =====================================================
+    // 🔕 УДАЛЕНИЕ FCM-ТОКЕНА НА СЕРВЕРЕ
+    // =====================================================
+    // Обнуляет FCM-токен при выходе из аккаунта,
+    // чтобы push не приходил на устройство вышедшего.
+    // =====================================================
+    static Future<ApiResponse<void>> deleteFcmToken() async {
+        final response = await _delete('/users/me/fcm-token');
+
+        if (response.isSuccess) {
+            return ApiResponse.success(null);
         }
 
         return ApiResponse.error(response.error!, statusCode: response.statusCode);

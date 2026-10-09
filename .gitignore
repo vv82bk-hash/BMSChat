@@ -193,3 +193,7 @@ firebase-debug.log
 .firebase/
 firebase-debug.log*
 firebase-debug.*.log
+
+# 🎯 Firebase Service Account — СЕКРЕТ! Никогда не коммитить
+firebase-service-account.json
+**/firebase-service-account.json

@@ -13,6 +13,8 @@
 //   • Геттеры для быстрой проверки в UI
 //
 // 🎯 ПРОФИЛЬ: setUser() + updateProfile()
+// 🔔 FCM: _sendFcmTokenToServer() при логине и старте
+// 🔕 FCM: удаление токена при logout
 // =====================================================
 
 import 'package:flutter/material.dart';
@@ -20,6 +22,7 @@ import 'package:flutter/material.dart';
 import '../models/user.dart';
 import '../models/role.dart';
 import '../services/api_service.dart';
+import '../services/notification_service.dart';
 import '../services/storage_service.dart';
 import '../services/socket_service.dart';
 import '../utils/app_logger.dart';
@@ -105,6 +108,9 @@ class AuthProvider extends ChangeNotifier {
 
                 await SocketService.connect(token);
 
+                // 🔔 Отправляем FCM-токен на сервер
+                await _sendFcmTokenToServer();
+
                 _isInitialized = true;
                 notifyListeners();
             } else {
@@ -161,6 +167,9 @@ class AuthProvider extends ChangeNotifier {
             );
 
             await SocketService.connect(token);
+
+            // 🔔 Отправляем FCM-токен на сервер
+            await _sendFcmTokenToServer();
 
             notifyListeners();
             return true;
@@ -230,6 +239,11 @@ class AuthProvider extends ChangeNotifier {
         notifyListeners();
 
         try {
+            // 🔕 Удаляем FCM-токен ПОКА авторизация ещё активна:
+            //    1. На сервере — обнуляем users.fcm_token.
+            //    2. Локально — удаляем из Firebase и SharedPreferences.
+            await _removeFcmToken();
+
             await ApiService.logout();
             SocketService.disconnect();
             await _clearAuth();
@@ -285,7 +299,6 @@ class AuthProvider extends ChangeNotifier {
     }
 
     /// Обновить профиль (имя и/или аватар) на сервере.
-    /// Возвращает true, если всё прошло успешно.
     Future<bool> updateProfile({
         String? displayName,
         String? avatar,
@@ -332,6 +345,66 @@ class AuthProvider extends ChangeNotifier {
             _isLoading = false;
             notifyListeners();
             return false;
+        }
+    }
+
+    // =====================================================
+    // 🔔 FCM-ТОКЕН
+    // =====================================================
+
+    /// Отправляет текущий FCM-токен устройства на сервер.
+    /// Вызывается при логине и при старте (если токен сохранён).
+    /// Не критично: если не получилось — просто логируем.
+    Future<void> _sendFcmTokenToServer() async {
+        try {
+            final fcmToken = await NotificationService.getFcmToken();
+
+            if (fcmToken == null || fcmToken.isEmpty) {
+                AppLogger.warn('FCM-токен ещё не получен, пропускаем');
+                return;
+            }
+
+            final response = await ApiService.sendFcmToken(fcmToken);
+
+            if (response.isSuccess) {
+                AppLogger.success(
+                    'FCM-токен отправлен на сервер: '
+                    '${fcmToken.substring(0, 20)}...',
+                );
+            } else {
+                AppLogger.warn(
+                    'Не удалось отправить FCM-токен: ${response.error}',
+                );
+            }
+        } catch (e) {
+            AppLogger.error('Ошибка отправки FCM-токена', e);
+        }
+    }
+
+    /// Удаляет FCM-токен:
+    ///   1. На сервере — обнуляет users.fcm_token.
+    ///   2. Локально — Firebase + SharedPreferences.
+    /// Вызывается при logout ПОКА авторизация активна.
+    Future<void> _removeFcmToken() async {
+        try {
+            // 1. На сервере
+            final response = await ApiService.deleteFcmToken();
+            if (response.isSuccess) {
+                AppLogger.info('FCM-токен удалён на сервере');
+            } else {
+                AppLogger.warn(
+                    'Не удалось удалить FCM-токен на сервере: ${response.error}',
+                );
+            }
+        } catch (e) {
+            AppLogger.error('Ошибка удаления FCM-токена на сервере', e);
+        }
+
+        try {
+            // 2. Локально
+            await NotificationService.deleteFcmToken();
+        } catch (e) {
+            AppLogger.error('Ошибка локального удаления FCM-токена', e);
         }
     }
 
