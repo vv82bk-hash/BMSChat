@@ -12,10 +12,7 @@
 //   • 8 прав
 //   • Геттеры для быстрой проверки в UI
 //
-// ИСПОЛЬЗОВАНИЕ В UI:
-//   final auth = Provider.of<AuthProvider>(context);
-//   if (auth.isAdmin) { ... }
-//   if (auth.canWriteGeneral) { ... }
+// 🎯 ПРОФИЛЬ: setUser() + updateProfile()
 // =====================================================
 
 import 'package:flutter/material.dart';
@@ -51,63 +48,33 @@ class AuthProvider extends ChangeNotifier {
     // =====================================================
     // 👑 ГЕТТЕРЫ РОЛЕЙ
     // =====================================================
-    // Быстрые проверки для UI.
-    // Возвращают false, если пользователь не авторизован.
 
-    /// Администратор (технический)?
     bool get isAdmin => _user?.isAdmin ?? false;
-
-    /// Командир?
     bool get isCommander => _user?.isCommander ?? false;
-
-    /// Боец?
     bool get isSoldier => _user?.isSoldier ?? false;
-
-    /// Новобранец?
     bool get isRecruit => _user?.isRecruit ?? false;
-
-    /// Командир или выше?
     bool get isCommanderOrHigher => _user?.isCommanderOrHigher ?? false;
 
-    /// Главная роль пользователя
     Role? get primaryRole => _user?.primaryRole;
-
-    /// Список ролей
     List<Role> get roles => _user?.roles ?? [];
 
     // =====================================================
     // 🎯 ГЕТТЕРЫ ПРАВ (8 штук)
     // =====================================================
 
-    /// Может писать в общий чат
     bool get canWriteGeneral => _user?.canWriteGeneral ?? false;
-
-    /// Может писать в личные чаты
     bool get canWritePrivate => _user?.canWritePrivate ?? false;
-
-    /// Может писать лично командиру
     bool get canWriteToCommander => _user?.canWriteToCommander ?? false;
-
-    /// Может создавать события в ленте
     bool get canCreateFeed => _user?.canCreateFeed ?? false;
-
-    /// Может подтверждать новичков
     bool get canApproveUsers => _user?.canApproveUsers ?? false;
-
-    /// Может управлять ролями
     bool get canManageRoles => _user?.canManageRoles ?? false;
-
-    /// Может управлять пользователями (Admin)
     bool get canManageUsers => _user?.canManageUsers ?? false;
-
-    /// Может назначать командиров (Admin)
     bool get canAssignCommanders => _user?.canAssignCommanders ?? false;
 
     // =====================================================
     // 🚀 ИНИЦИАЛИЗАЦИЯ
     // =====================================================
 
-    /// Проверить сохранённый токен при запуске приложения
     Future<void> initialize() async {
         AppLogger.info('🔐 Инициализация авторизации');
 
@@ -124,11 +91,9 @@ class AuthProvider extends ChangeNotifier {
 
             AppLogger.info('Найден сохранённый токен, проверяем...');
 
-            // Сразу показываем пользователя (для скорости)
             _user = savedUser;
             notifyListeners();
 
-            // Проверяем токен через сервер
             final response = await ApiService.getMe();
 
             if (response.isSuccess && response.data != null) {
@@ -160,7 +125,6 @@ class AuthProvider extends ChangeNotifier {
     // 🔑 ВХОД
     // =====================================================
 
-    /// Войти в систему
     Future<bool> login(String username, String password) async {
         AppLogger.info('🔑 Попытка входа: $username');
 
@@ -179,13 +143,11 @@ class AuthProvider extends ChangeNotifier {
                 return false;
             }
 
-            // Извлекаем данные
             final data = response.data!;
             final token = data['token'] as String;
             final userJson = data['user'] as Map<String, dynamic>;
             final user = User.fromJson(userJson);
 
-            // Сохраняем
             await StorageService.saveToken(token);
             await StorageService.saveUser(user);
 
@@ -215,10 +177,6 @@ class AuthProvider extends ChangeNotifier {
     // 📝 РЕГИСТРАЦИЯ
     // =====================================================
 
-    /// Зарегистрировать нового пользователя
-    /// 
-    /// ⚠️ После регистрации нужно ЖДАТЬ ПОДТВЕРЖДЕНИЯ командира.
-    /// Роль выдаётся автоматически при подтверждении.
     Future<bool> register(
         String username,
         String password,
@@ -265,7 +223,6 @@ class AuthProvider extends ChangeNotifier {
     // 🚪 ВЫХОД
     // =====================================================
 
-    /// Выйти из аккаунта
     Future<void> logout() async {
         AppLogger.info('🚪 Выход из аккаунта');
 
@@ -294,9 +251,6 @@ class AuthProvider extends ChangeNotifier {
     // =====================================================
 
     /// Обновить данные текущего пользователя с сервера.
-    /// 
-    /// ⚠️ ВАЖНО: вызывать после того, как командир изменил роль
-    /// (например, повысил с новобранца до бойца).
     Future<void> refreshUser() async {
         if (_user == null) return;
 
@@ -322,18 +276,75 @@ class AuthProvider extends ChangeNotifier {
         }
     }
 
+    /// Установить пользователя напрямую (например, после updateProfile).
+    Future<void> setUser(User user) async {
+        _user = user;
+        await StorageService.saveUser(user);
+        notifyListeners();
+        AppLogger.info('👤 Пользователь обновлён: ${user.displayName}');
+    }
+
+    /// Обновить профиль (имя и/или аватар) на сервере.
+    /// Возвращает true, если всё прошло успешно.
+    Future<bool> updateProfile({
+        String? displayName,
+        String? avatar,
+    }) async {
+        if (_user == null) {
+            AppLogger.warn('updateProfile: пользователь не авторизован');
+            return false;
+        }
+
+        if (displayName == null && avatar == null) {
+            AppLogger.warn('updateProfile: нечего обновлять');
+            return false;
+        }
+
+        _isLoading = true;
+        notifyListeners();
+
+        try {
+            final response = await ApiService.updateProfile(
+                displayName: displayName,
+                avatar: avatar,
+            );
+
+            if (!response.isSuccess || response.data == null) {
+                _error = response.error ?? 'Ошибка обновления профиля';
+                _isLoading = false;
+                AppLogger.warn('Ошибка updateProfile: $_error');
+                notifyListeners();
+                return false;
+            }
+
+            _user = response.data;
+            await StorageService.saveUser(_user!);
+
+            _isLoading = false;
+            _error = null;
+            notifyListeners();
+
+            AppLogger.success('Профиль обновлён: ${_user!.displayName}');
+            return true;
+        } catch (e) {
+            AppLogger.error('Ошибка updateProfile', e);
+            _error = 'Ошибка сети';
+            _isLoading = false;
+            notifyListeners();
+            return false;
+        }
+    }
+
     // =====================================================
     // 🛠️ ВСПОМОГАТЕЛЬНЫЕ
     // =====================================================
 
-    /// Очистить авторизационные данные
     Future<void> _clearAuth() async {
         _user = null;
         _error = null;
         await StorageService.clearAll();
     }
 
-    /// Сбросить ошибку (например, после показа SnackBar)
     void clearError() {
         _error = null;
         notifyListeners();
@@ -343,8 +354,7 @@ class AuthProvider extends ChangeNotifier {
     // 📊 ОТЛАДКА
     // =====================================================
 
-    /// Вывести текущее состояние авторизации в лог
-        void debugPrintState() {
+    void debugPrintState() {
         if (_user == null) {
             AppLogger.debug('AuthProvider: не авторизован');
             return;

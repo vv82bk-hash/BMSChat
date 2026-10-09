@@ -3,11 +3,9 @@
 // =====================================================
 // История патчей:
 //   🎯 2026-09-19 — clearUserRoles перед сменой роли
-//                   (approve, assign-commander, roles/:roleId)
 //   🔒 2026-09-19 — запрет смены роли для неподтверждённых
-//                   (set-role, roles/:roleId)
 //   🔵 2026-09-19 — при роли «Новобранец» is_approved = false
-//                   (make-recruit, set-role, roles/:roleId)
+//   👤 2026-10-09 — PATCH /api/users/me (смена имени и аватара)
 // =====================================================
 
 const express = require('express');
@@ -28,9 +26,6 @@ const logger = require('../utils/logger');
 // 🛠️ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 // =====================================================
 
-/**
- * Гарантирует, что роль существует
- */
 async function ensureRole(roleName) {
     const existing = await pool.query('SELECT id FROM roles WHERE name = $1', [roleName]);
     if (existing.rows.length > 0) return existing.rows[0].id;
@@ -93,9 +88,6 @@ async function clearUserRoles(userId) {
     await pool.query('DELETE FROM user_roles WHERE user_id = $1', [userId]);
 }
 
-/**
- * Проверяет, является ли пользователь администратором
- */
 async function isUserAdmin(userId) {
     const result = await pool.query(`
         SELECT 1 FROM user_roles ur
@@ -106,9 +98,6 @@ async function isUserAdmin(userId) {
     return result.rows.length > 0;
 }
 
-/**
- * Проверяет, может ли actor управлять target.
- */
 async function canManageTarget(actorId, targetId) {
     if (actorId === targetId) return { allowed: true };
 
@@ -124,9 +113,6 @@ async function canManageTarget(actorId, targetId) {
     };
 }
 
-/**
- * 🔒 Проверяет, что пользователь подтверждён.
- */
 async function getUserApprovedStatus(userId) {
     const result = await pool.query(
         'SELECT is_approved FROM users WHERE id = $1',
@@ -136,14 +122,94 @@ async function getUserApprovedStatus(userId) {
     return result.rows[0].is_approved === true;
 }
 
-/**
- * 🔵 Сбрасывает is_approved в false.
- * Используется при понижении до «Новобранца» — Новобранец
- * всегда должен требовать подтверждения.
- */
 async function unapproveUser(userId) {
     await pool.query('UPDATE users SET is_approved = FALSE WHERE id = $1', [userId]);
 }
+
+// =====================================================
+// 👤 PATCH /api/users/me
+// =====================================================
+// Обновляет профиль текущего пользователя.
+// Принимает: display_name (string), avatar (string).
+// ВАЖНО: этот роут должен быть ДО /:id, иначе Express
+//        примет "me" за ID пользователя.
+// =====================================================
+router.patch('/me', authMiddleware, async (req, res) => {
+    try {
+        const { display_name, avatar } = req.body;
+
+        // Собираем только те поля, которые пришли
+        const updates = [];
+        const values = [];
+        let paramIndex = 1;
+
+        if (display_name !== undefined) {
+            const name = String(display_name).trim();
+            if (name.length < 2 || name.length > 100) {
+                return res.status(400).json({
+                    error: 'Имя должно быть от 2 до 100 символов',
+                });
+            }
+            updates.push(`display_name = $${paramIndex++}`);
+            values.push(name);
+        }
+
+        if (avatar !== undefined) {
+            const avatarStr = avatar === null ? null : String(avatar).trim();
+            if (avatarStr !== null && avatarStr.length > 500) {
+                return res.status(400).json({
+                    error: 'Слишком длинный путь к аватару',
+                });
+            }
+            updates.push(`avatar = $${paramIndex++}`);
+            values.push(avatarStr);
+        }
+
+        if (updates.length === 0) {
+            return res.status(400).json({
+                error: 'Нечего обновлять',
+            });
+        }
+
+        values.push(req.user.id);
+
+        const result = await pool.query(`
+            UPDATE users
+            SET ${updates.join(', ')}
+            WHERE id = $${paramIndex}
+            RETURNING id, username, display_name, avatar, status,
+                      is_approved, last_seen, created_at
+        `, values);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Пользователь не найден' });
+        }
+
+        const user = result.rows[0];
+        const roles = await getUserRoles(user.id);
+
+        logger.success('Профиль обновлён', {
+            userId: user.id,
+            updatedFields: Object.keys(req.body),
+        });
+
+        res.json({
+            user: {
+                ...user,
+                roles: roles.map((r) => ({
+                    id: r.id,
+                    name: r.name,
+                    color: r.color,
+                    icon: r.icon,
+                    priority: r.priority,
+                })),
+            },
+        });
+    } catch (error) {
+        logger.error('Ошибка PATCH /users/me', error);
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
 
 // =====================================================
 // 👥 GET /api/users
@@ -279,14 +345,12 @@ router.post(
                 return res.status(400).json({ error: 'Пользователь уже подтверждён' });
             }
 
-            // Подтверждаем
             await pool.query(`
                 UPDATE users 
                 SET is_approved = TRUE, approved_by = $1 
                 WHERE id = $2
             `, [req.user.id, userId]);
 
-            // 🎯 ПАТЧ 1: заменяем все роли на одну «Боец»
             const soldierRoleId = await ensureRole('Боец');
             await clearUserRoles(userId);
             await assignRoleToUser(userId, soldierRoleId, req.user.id);
@@ -297,7 +361,6 @@ router.post(
                 roleAssigned: 'Боец',
             });
 
-            // Добавляем в общий чат
             const generalChat = await pool.query(
                 `SELECT id FROM chats WHERE type = 'general' LIMIT 1`
             );
@@ -310,7 +373,6 @@ router.post(
                 `, [generalChat.rows[0].id, userId]);
             }
 
-            // Событие в ленте
             await pool.query(`
                 INSERT INTO feed_events (type, title, content, author_id, target_id)
                 VALUES ('new_member', $1, $2, $3, $4)
@@ -388,7 +450,6 @@ router.post(
         try {
             const userId = parseInt(req.params.id, 10);
 
-            // 🔒 ЗАЩИТА: нельзя управлять администратором
             const check = await canManageTarget(req.user.id, userId);
             if (!check.allowed) {
                 return res.status(403).json({ error: check.reason });
@@ -422,7 +483,6 @@ router.post(
                 return res.status(400).json({ error: 'Пользователь уже командир' });
             }
 
-            // 🎯 ПАТЧ 2: заменяем все роли на одну «Командир»
             const commanderRoleId = await ensureRole('Командир');
             await clearUserRoles(userId);
             await assignRoleToUser(userId, commanderRoleId, req.user.id);
@@ -454,7 +514,6 @@ router.post(
         try {
             const userId = parseInt(req.params.id, 10);
 
-            // 🔒 ЗАЩИТА: нельзя управлять администратором
             const check = await canManageTarget(req.user.id, userId);
             if (!check.allowed) {
                 return res.status(403).json({ error: check.reason });
@@ -471,7 +530,6 @@ router.post(
 
             const user = userResult.rows[0];
 
-            // Убираем роль «Командир»
             const commanderRole = await pool.query(
                 `SELECT id FROM roles WHERE name = 'Командир'`
             );
@@ -482,7 +540,6 @@ router.post(
                 `, [userId, commanderRole.rows[0].id]);
             }
 
-            // Если ролей не осталось — выдаём «Боец»
             const remaining = await pool.query(
                 'SELECT COUNT(*) as cnt FROM user_roles WHERE user_id = $1',
                 [userId]
@@ -519,7 +576,6 @@ router.post(
         try {
             const userId = parseInt(req.params.id, 10);
 
-            // 🔒 ЗАЩИТА: нельзя управлять администратором
             const check = await canManageTarget(req.user.id, userId);
             if (!check.allowed) {
                 return res.status(403).json({ error: check.reason });
@@ -534,7 +590,6 @@ router.post(
                 return res.status(404).json({ error: 'Пользователь не найден' });
             }
 
-            // 🔵 ПАТЧ 4: Новобранец всегда ждёт подтверждения
             await unapproveUser(userId);
 
             await clearUserRoles(userId);
@@ -573,7 +628,6 @@ router.post(
                 return res.status(400).json({ error: 'roleName обязателен' });
             }
 
-            // 🔒 ЗАЩИТА: нельзя управлять администратором
             const check = await canManageTarget(req.user.id, userId);
             if (!check.allowed) {
                 return res.status(403).json({ error: check.reason });
@@ -597,7 +651,6 @@ router.post(
                 return res.status(404).json({ error: `Роль "${roleName}" не найдена` });
             }
 
-            // 🔒 ЗАЩИТА is_approved: неподтверждённому можно только «Новобранец»
             const isApproved = await getUserApprovedStatus(userId);
             if (!isApproved && roleName !== 'Новобранец') {
                 return res.status(400).json({
@@ -605,7 +658,6 @@ router.post(
                 });
             }
 
-            // 🔵 ПАТЧ 5: если ставим «Новобранец» — сбрасываем подтверждение
             if (roleName === 'Новобранец') {
                 await unapproveUser(userId);
             }
@@ -641,7 +693,6 @@ router.post(
             const userId = parseInt(req.params.id, 10);
             const roleId = parseInt(req.params.roleId, 10);
 
-            // 🔒 ЗАЩИТА: нельзя управлять администратором
             const check = await canManageTarget(req.user.id, userId);
             if (!check.allowed) {
                 return res.status(403).json({ error: check.reason });
@@ -665,7 +716,6 @@ router.post(
 
             const roleName = roleResult.rows[0].name;
 
-            // 🔒 ЗАЩИТА is_approved: неподтверждённому можно только «Новобранец»
             const isApproved = await getUserApprovedStatus(userId);
             if (!isApproved && roleName !== 'Новобранец') {
                 return res.status(400).json({
@@ -673,12 +723,10 @@ router.post(
                 });
             }
 
-            // 🔵 ПАТЧ 6: если ставим «Новобранец» — сбрасываем подтверждение
             if (roleName === 'Новобранец') {
                 await unapproveUser(userId);
             }
 
-            // 🎯 ПАТЧ 3: заменяем все роли на указанную
             await clearUserRoles(userId);
             await assignRoleToUser(userId, roleId, req.user.id);
 
@@ -708,7 +756,6 @@ router.delete(
             const userId = parseInt(req.params.id, 10);
             const roleId = parseInt(req.params.roleId, 10);
 
-            // 🔒 ЗАЩИТА: нельзя управлять администратором
             const check = await canManageTarget(req.user.id, userId);
             if (!check.allowed) {
                 return res.status(403).json({ error: check.reason });

@@ -2,8 +2,8 @@
 // 🌐 BMSChat — СЕРВИС API
 // =====================================================
 // 🎯 ШАГ 8: методы для управления каналами
-// 🎯 FIX (web upload): MultipartFile.fromBytes вместо fromPath,
-//     потому что on web dart:io недоступен.
+// 🎯 FIX (web upload): MultipartFile.fromBytes вместо fromPath
+// 🎯 ПРОФИЛЬ: updateProfile() + _patch()
 // =====================================================
 
 import 'dart:async';
@@ -169,6 +169,29 @@ class ApiService {
         }
     }
 
+    static Future<ApiResponse<dynamic>> _patch(
+        String endpoint, {
+        Map<String, dynamic>? body,
+    }) async {
+        try {
+            final url = '${Constants.apiUrl}$endpoint';
+            AppLogger.http('PATCH', url);
+
+            final response = await http
+                .patch(
+                    Uri.parse(url),
+                    headers: await _headers(),
+                    body: body != null ? jsonEncode(body) : null,
+                )
+                .timeout(Constants.httpTimeout);
+
+            return _handleResponse(response);
+        } catch (e) {
+            AppLogger.error('Ошибка PATCH $endpoint', e);
+            return ApiResponse.error('Ошибка сети: $e');
+        }
+    }
+
     static Future<ApiResponse<dynamic>> _delete(String endpoint) async {
         try {
             final url = '${Constants.apiUrl}$endpoint';
@@ -279,6 +302,35 @@ class ApiService {
         if (response.isSuccess) {
             return ApiResponse.success(null);
         }
+        return ApiResponse.error(response.error!, statusCode: response.statusCode);
+    }
+
+    // =====================================================
+    // 👤 ОБНОВЛЕНИЕ ПРОФИЛЯ
+    // =====================================================
+    // Обновляет display_name и/или avatar текущего пользователя.
+    // Возвращает обновлённого User.
+    // =====================================================
+    static Future<ApiResponse<User>> updateProfile({
+        String? displayName,
+        String? avatar,
+    }) async {
+        final body = <String, dynamic>{};
+        if (displayName != null) body['display_name'] = displayName;
+        if (avatar != null) body['avatar'] = avatar;
+
+        if (body.isEmpty) {
+            return ApiResponse.error('Нечего обновлять', statusCode: 400);
+        }
+
+        final response = await _patch('/users/me', body: body);
+
+        if (response.isSuccess) {
+            final data = response.data as Map<String, dynamic>;
+            final userJson = data['user'] as Map<String, dynamic>;
+            return ApiResponse.success(User.fromJson(userJson));
+        }
+
         return ApiResponse.error(response.error!, statusCode: response.statusCode);
     }
 
@@ -643,10 +695,6 @@ class ApiService {
     // =====================================================
     // 📤 ЗАГРУЗКА ФАЙЛОВ
     // =====================================================
-    // 🎯 FIX (web): принимает XFile и читает байты через
-    // readAsBytes(), потому что MultipartFile.fromPath
-    // работает только на мобильных (dart:io).
-    // =====================================================
 
     static Future<ApiResponse<Map<String, dynamic>>> uploadFile(
         XFile file,
@@ -663,7 +711,6 @@ class ApiService {
                 request.headers['Authorization'] = 'Bearer $token';
             }
 
-            // 🎯 Читаем байты — работает и на web, и на мобильных
             final bytes = await file.readAsBytes();
 
             request.files.add(
