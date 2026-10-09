@@ -15,9 +15,11 @@
 // 🎯 ПАНЕЛЬ 4 КНОПОК — только при фокусе
 // 🎯 FIX (web upload): sendFile принимает XFile, а не path
 // 🎯 FIX (дубли + анимация): openChat перенесён сюда из ChatsScreen
+// 🎯 ГОЛОСОВЫЕ: запись OGG/Opus, отправка, UI записи
 // =====================================================
 
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
@@ -27,6 +29,7 @@ import '../models/chat.dart';
 import '../models/message.dart';
 import '../providers/auth_provider.dart';
 import '../providers/chat_provider.dart';
+import '../services/voice_recorder_service.dart';
 import '../themes/rasta_theme.dart';
 import '../widgets/animated_message_wrapper.dart';
 import '../widgets/message_bubble.dart';
@@ -53,6 +56,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
     // 🎯 FocusNode — для управления клавиатурой
     final _inputFocusNode = FocusNode();
+
+    // 🎤 Сервис записи голосовых
+    final _voiceRecorder = VoiceRecorderService();
 
     bool _isTyping = false;
 
@@ -84,6 +90,11 @@ class _ChatScreenState extends State<ChatScreen> {
     // 🎯 ПАНЕЛЬ 4 КНОПОК: видна только когда пользователь тапнул в поле
     bool _isInputFocused = false;
 
+    // 🎤 ГОЛОСОВЫЕ: состояние записи
+    bool _isRecording = false;
+    int _recordingSeconds = 0;
+    bool _isSendingVoice = false;
+
     @override
     void initState() {
         super.initState();
@@ -111,6 +122,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _messageController.dispose();
         _scrollController.dispose();
         _inputFocusNode.dispose();
+        _voiceRecorder.dispose();
         super.dispose();
     }
 
@@ -268,7 +280,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     // ============================================
-    // 📤 ОТПРАВКА
+    // 📤 ОТПРАВКА ТЕКСТА
     // ============================================
     Future<void> _sendMessage() async {
         final text = _messageController.text.trim();
@@ -417,11 +429,115 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     // ============================================
-    // 🎤 ГОЛОСОВОЕ (заглушка)
+    // 🎤 ГОЛОСОВЫЕ СООБЩЕНИЯ
     // ============================================
+
+    /// Старт записи. Вызывается по тапу на иконку микрофона.
+    Future<void> _startVoiceRecording() async {
+        // Web не поддерживает запись в OGG/Opus через пакет record
+        if (kIsWeb) {
+            _showInfo('Запись голосовых доступна только в мобильном приложении');
+            return;
+        }
+
+        _hideInputPanel();
+        FocusScope.of(context).unfocus();
+
+        final started = await _voiceRecorder.startRecording();
+
+        if (!mounted) return;
+
+        if (!started) {
+            _showError('Нет доступа к микрофону или ошибка записи');
+            return;
+        }
+
+        setState(() {
+            _isRecording = true;
+            _recordingSeconds = 0;
+        });
+
+        _voiceRecorder.durationStream.listen((seconds) {
+            if (!mounted) return;
+            setState(() => _recordingSeconds = seconds);
+        });
+    }
+
+    /// Остановка и отправка голосового.
+    Future<void> _stopAndSendVoice() async {
+        if (!_isRecording) return;
+
+        setState(() => _isSendingVoice = true);
+
+        final result = await _voiceRecorder.stopRecording();
+
+        if (!mounted) return;
+
+        setState(() {
+            _isRecording = false;
+            _isSendingVoice = false;
+        });
+
+        if (result == null) {
+            _showError('Не удалось сохранить запись');
+            return;
+        }
+
+        // Слишком короткая запись (как в Telegram — минимум ~1 сек)
+        if (result.seconds < 1) {
+            _showInfo('Слишком короткая запись');
+            return;
+        }
+
+        try {
+            final chat = Provider.of<ChatProvider>(context, listen: false);
+            final file = XFile(result.path);
+
+            _showInfo('Отправка голосового...');
+
+            final success = await chat.sendFile(file, 'voice');
+
+            if (!mounted) return;
+
+            if (success) {
+                _scrollToBottom();
+            } else {
+                _showError('Не удалось отправить голосовое');
+            }
+        } catch (e) {
+            if (!mounted) return;
+            _showError('Ошибка отправки: $e');
+        }
+    }
+
+    /// Отмена записи без отправки.
+    Future<void> _cancelVoiceRecording() async {
+        if (!_isRecording) return;
+
+        await _voiceRecorder.cancelRecording();
+
+        if (!mounted) return;
+
+        setState(() {
+            _isRecording = false;
+            _recordingSeconds = 0;
+        });
+    }
+
+    /// Форматирование таймера записи (ММ:СС)
+    String _formatRecordingTime(int seconds) {
+        final m = seconds ~/ 60;
+        final s = seconds % 60;
+        return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+    }
+
+    /// 🎤 Кнопка микрофона. Первый тап — старт, второй — стоп+отправка.
     void _pickVoice() {
-        _showInputPanel();
-        _showInfo('🎤 Голосовые сообщения — скоро');
+        if (_isRecording) {
+            _stopAndSendVoice();
+            return;
+        }
+        _startVoiceRecording();
     }
 
     // ============================================
@@ -1131,25 +1247,129 @@ class _ChatScreenState extends State<ChatScreen> {
                         if (chat.replyToMessage != null)
                             _buildReplyPreview(chat),
 
-                        AnimatedContainer(
-                            duration: const Duration(milliseconds: 220),
-                            curve: Curves.easeOutCubic,
-                            height: _isInputFocused ? null : 0,
-                            child: ClipRect(
-                                child: Align(
-                                    alignment: Alignment.bottomCenter,
-                                    heightFactor: _isInputFocused ? 1.0 : 0.0,
-                                    child: _buildQuickActionsBar(),
+                        // 🎤 Если идёт запись — показываем панель записи вместо поля ввода
+                        if (_isRecording)
+                            _buildRecordingPanel()
+                        else ...[
+                            AnimatedContainer(
+                                duration: const Duration(milliseconds: 220),
+                                curve: Curves.easeOutCubic,
+                                height: _isInputFocused ? null : 0,
+                                child: ClipRect(
+                                    child: Align(
+                                        alignment: Alignment.bottomCenter,
+                                        heightFactor:
+                                            _isInputFocused ? 1.0 : 0.0,
+                                        child: _buildQuickActionsBar(),
+                                    ),
                                 ),
                             ),
-                        ),
 
-                        _buildInputField(),
-                        if (_showEmojiPicker) _buildEmojiPicker(),
+                            _buildInputField(),
+                            if (_showEmojiPicker) _buildEmojiPicker(),
+                        ],
                     ] else
                         _buildBlockedField(permissionError),
 
                     SizedBox(height: navBarHeight),
+                ],
+            ),
+        );
+    }
+
+    // =====================================================
+    // 🎤 ПАНЕЛЬ ЗАПИСИ ГОЛОСОВОГО
+    // =====================================================
+    Widget _buildRecordingPanel() {
+        return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: const BoxDecoration(
+                color: RastaTheme.surface,
+                border: Border(
+                    top: BorderSide(color: RastaTheme.separator, width: 0.5),
+                ),
+            ),
+            child: Row(
+                children: [
+                    // 🔴 Индикатор + таймер
+                    Container(
+                        width: 12,
+                        height: 12,
+                        decoration: const BoxDecoration(
+                            color: RastaTheme.error,
+                            shape: BoxShape.circle,
+                        ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                        _formatRecordingTime(_recordingSeconds),
+                        style: const TextStyle(
+                            color: RastaTheme.textPrimary,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            fontFeatures: [FontFeature.tabularFigures()],
+                        ),
+                    ),
+
+                    const SizedBox(width: 12),
+
+                    // Подсказка
+                    const Expanded(
+                        child: Text(
+                            'Идёт запись...',
+                            style: TextStyle(
+                                color: RastaTheme.textMuted,
+                                fontSize: 14,
+                            ),
+                        ),
+                    ),
+
+                    // ❌ Отмена
+                    IconButton(
+                        icon: const Icon(Icons.close, size: 26),
+                        color: RastaTheme.textMuted,
+                        tooltip: 'Отмена',
+                        onPressed: _isSendingVoice
+                            ? null
+                            : _cancelVoiceRecording,
+                    ),
+
+                    // ✅ Отправить
+                    Container(
+                        decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                                BoxShadow(
+                                    color: RastaTheme.rastaYellow
+                                        .withValues(alpha: 0.4),
+                                    blurRadius: 10,
+                                    spreadRadius: 1,
+                                ),
+                            ],
+                        ),
+                        child: CircleAvatar(
+                            radius: 24,
+                            backgroundColor: RastaTheme.rastaYellow,
+                            child: _isSendingVoice
+                                ? const Padding(
+                                    padding: EdgeInsets.all(10),
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                                Colors.black),
+                                    ),
+                                )
+                                : IconButton(
+                                    icon: const Icon(
+                                        Icons.send,
+                                        color: Colors.black,
+                                        size: 22,
+                                    ),
+                                    onPressed: _stopAndSendVoice,
+                                ),
+                        ),
+                    ),
                 ],
             ),
         );
