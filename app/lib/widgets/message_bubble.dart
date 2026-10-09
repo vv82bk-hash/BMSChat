@@ -8,12 +8,14 @@
 // 🎯 ЭТАП D.1: CachedNetworkImage для картинок-вложений
 // 🎯 ЭТАП D.2: RepaintBoundary для изоляции перерисовки
 // 🎯 ГОЛОСОВЫЕ: плеер с Play/Pause, таймер, простая волна
+// 🎯 ПРОСМОТР ФОТО: InstaImageViewer (зум + свайп вниз)
 // =====================================================
 
 import 'dart:ui' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:insta_image_viewer/insta_image_viewer.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../config/constants.dart';
@@ -390,10 +392,13 @@ class MessageBubble extends StatelessWidget {
 
         return ClipRRect(
             borderRadius: BorderRadius.circular(14),
-            child: _ProportionalImage(
-                url: url,
-                maxWidth: 280,
-                maxHeight: 400,
+            child: InstaImageViewer(
+                // 🎯 Полноэкранный просмотр с зумом и свайпом вниз
+                child: _ProportionalImage(
+                    url: url,
+                    maxWidth: 280,
+                    maxHeight: 400,
+                ),
             ),
         );
     }
