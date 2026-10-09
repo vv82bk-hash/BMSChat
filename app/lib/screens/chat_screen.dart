@@ -22,6 +22,8 @@
 // 🎯 ИНФО: переход на ChatInfoScreen
 // 🎯 ПОИСК: AppBar-поле + результаты + debounce + пагинация
 // 🎯 CLEAR: пункт «Очистить историю» → подтверждение + вызов
+// 🎯 КЭШ (Уровень 1): RefreshIndicator (pull-to-refresh) для
+//    принудительного обновления сообщений с сервера
 // =====================================================
 
 import 'dart:async';
@@ -1344,106 +1346,14 @@ class _ChatScreenState extends State<ChatScreen> {
                                                 ),
                                             )
                                             : chat.messages.isEmpty
-                                                ? _buildEmptyState(activeChat
-                                                        ?.useLogoImage ??
-                                                    false)
-                                                : ListView.builder(
-                                                    controller:
-                                                        _scrollController,
-                                                    reverse: true,
-                                                    padding:
-                                                        const EdgeInsets
-                                                            .symmetric(
-                                                        vertical: 8,
-                                                        horizontal: 0,
-                                                    ),
-                                                    itemCount:
-                                                        chat.messages.length,
-                                                    itemBuilder:
-                                                        (context, index) {
-                                                        final msgIndex = chat
-                                                                .messages
-                                                                .length -
-                                                            1 -
-                                                            index;
-                                                        final message = chat
-                                                            .messages[msgIndex];
-                                                        final isOwn = message
-                                                                .senderId ==
-                                                            currentUserId;
-
-                                                        final replyTo = message
-                                                                    .replyToId !=
-                                                                null
-                                                            ? _messagesById[
-                                                                message
-                                                                    .replyToId]
-                                                            : null;
-
-                                                        final prevMessage =
-                                                            msgIndex > 0
-                                                                ? chat.messages[
-                                                                    msgIndex -
-                                                                        1]
-                                                                : null;
-                                                        final showDate =
-                                                            prevMessage ==
-                                                                    null ||
-                                                                !_isSameDay(
-                                                                    message
-                                                                        .createdAt,
-                                                                    prevMessage
-                                                                        .createdAt,
-                                                                );
-
-                                                        return Column(
-                                                            key: _getMessageKey(
-                                                                message.id),
-                                                            crossAxisAlignment:
-                                                                CrossAxisAlignment
-                                                                    .stretch,
-                                                            children: [
-                                                                if (showDate)
-                                                                    _buildDateDivider(
-                                                                        message
-                                                                            .createdAt,
-                                                                    ),
-                                                                AnimatedMessageWrapper(
-                                                                    messageId:
-                                                                        message
-                                                                            .id,
-                                                                    child: MessageBubble(
-                                                                        message:
-                                                                            message,
-                                                                        isOwn:
-                                                                            isOwn,
-                                                                        replyTo:
-                                                                            replyTo,
-                                                                        onLongPress: () =>
-                                                                            _showReactionPicker(
-                                                                                context,
-                                                                                message,
-                                                                                isOwn,
-                                                                            ),
-                                                                        onReply:
-                                                                            () {
-                                                                            chat.setReplyTo(
-                                                                                message);
-                                                                        },
-                                                                        onReplyTap: replyTo !=
-                                                                                null
-                                                                            ? () => _scrollToMessage(
-                                                                                replyTo.id)
-                                                                            : null,
-                                                                        onSenderTap: !isOwn
-                                                                            ? () => _openUserProfile(
-                                                                                message.senderId)
-                                                                            : null,
-                                                                    ),
-                                                                ),
-                                                            ],
-                                                        );
-                                                    },
+                                                ? _buildEmptyRefreshable(
+                                                    chat,
+                                                    activeChat?.useLogoImage ??
+                                                        false,
+                                                )
+                                                : _buildMessagesRefreshable(
+                                                    chat,
+                                                    currentUserId,
                                                 ),
 
                                         if (chat.isLoadingMore)
@@ -1536,6 +1446,107 @@ class _ChatScreenState extends State<ChatScreen> {
 
                     SizedBox(height: navBarHeight),
                 ],
+            ),
+        );
+    }
+
+    // =====================================================
+    // 🔄 PULL-TO-REFRESH: пустое состояние
+    // =====================================================
+    // В пустом чате тоже должен работать pull-to-refresh.
+    // Оборачиваем empty state в ListView с AlwaysScrollable,
+    // чтобы RefreshIndicator мог поймать жест.
+    Widget _buildEmptyRefreshable(ChatProvider chat, bool isGeneral) {
+        return RefreshIndicator(
+            color: RastaTheme.rastaYellow,
+            backgroundColor: RastaTheme.surface,
+            onRefresh: () => chat.refreshFromServer(),
+            child: LayoutBuilder(
+                builder: (context, constraints) {
+                    return ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        children: [
+                            SizedBox(
+                                height: constraints.maxHeight,
+                                child: _buildEmptyState(isGeneral),
+                            ),
+                        ],
+                    );
+                },
+            ),
+        );
+    }
+
+    // =====================================================
+    // 🔄 PULL-TO-REFRESH: список сообщений
+    // =====================================================
+    Widget _buildMessagesRefreshable(
+        ChatProvider chat,
+        int currentUserId,
+    ) {
+        return RefreshIndicator(
+            color: RastaTheme.rastaYellow,
+            backgroundColor: RastaTheme.surface,
+            onRefresh: () => chat.refreshFromServer(),
+            child: ListView.builder(
+                controller: _scrollController,
+                reverse: true,
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.symmetric(
+                    vertical: 8,
+                    horizontal: 0,
+                ),
+                itemCount: chat.messages.length,
+                itemBuilder: (context, index) {
+                    final msgIndex = chat.messages.length - 1 - index;
+                    final message = chat.messages[msgIndex];
+                    final isOwn = message.senderId == currentUserId;
+
+                    final replyTo = message.replyToId != null
+                        ? _messagesById[message.replyToId]
+                        : null;
+
+                    final prevMessage = msgIndex > 0
+                        ? chat.messages[msgIndex - 1]
+                        : null;
+                    final showDate = prevMessage == null ||
+                        !_isSameDay(
+                            message.createdAt,
+                            prevMessage.createdAt,
+                        );
+
+                    return Column(
+                        key: _getMessageKey(message.id),
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                            if (showDate)
+                                _buildDateDivider(message.createdAt),
+                            AnimatedMessageWrapper(
+                                messageId: message.id,
+                                child: MessageBubble(
+                                    message: message,
+                                    isOwn: isOwn,
+                                    replyTo: replyTo,
+                                    onLongPress: () => _showReactionPicker(
+                                        context,
+                                        message,
+                                        isOwn,
+                                    ),
+                                    onReply: () {
+                                        chat.setReplyTo(message);
+                                    },
+                                    onReplyTap: replyTo != null
+                                        ? () => _scrollToMessage(replyTo.id)
+                                        : null,
+                                    onSenderTap: !isOwn
+                                        ? () => _openUserProfile(
+                                            message.senderId)
+                                        : null,
+                                ),
+                            ),
+                        ],
+                    );
+                },
             ),
         );
     }

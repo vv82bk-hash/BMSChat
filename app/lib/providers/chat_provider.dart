@@ -19,6 +19,8 @@
 //    loadMoreSearchResults — поиск по сообщениям в активном чате
 // 🎯 CLEAR: clearHistory — soft-delete истории чата +
 //    обработка socket-события history_cleared
+// 🎯 КЭШ (Уровень 1): TTL 5 мин, openChat не ходит в сеть
+//    при свежем кэше + refreshFromServer для pull-to-refresh
 // =====================================================
 
 import 'dart:async';
@@ -61,6 +63,7 @@ class ChatProvider extends ChangeNotifier {
     bool _isLoadingChats = false;
     bool _isLoadingMessages = false;
     bool _isSendingMessage = false;
+    bool _isRefreshing = false;
 
     String? _chatsError;
     String? _messagesError;
@@ -76,8 +79,10 @@ class ChatProvider extends ChangeNotifier {
     bool _isSearchLoading = false;
 
     // 🎯 ОПТИМИЗАЦИЯ: кэш сообщений по chatId
+    // 🎯 Уровень 1: TTL увеличен до 5 минут.
+    // Если кэш свежий — openChat не идёт в сеть вообще.
     final Map<int, _CachedMessages> _messagesCache = {};
-    static const Duration _cacheTtl = Duration(minutes: 2);
+    static const Duration _cacheTtl = Duration(minutes: 5);
 
     // 🎯 ЭТАП C.2: закреплённые чаты
     static const String _pinnedKey = 'bmschat_pinned_chat_ids';
@@ -112,6 +117,7 @@ class ChatProvider extends ChangeNotifier {
     bool get isLoadingChats => _isLoadingChats;
     bool get isLoadingMessages => _isLoadingMessages;
     bool get isSendingMessage => _isSendingMessage;
+    bool get isRefreshing => _isRefreshing;
     String? get chatsError => _chatsError;
     String? get messagesError => _messagesError;
     Message? get replyToMessage => _replyToMessage;
@@ -149,6 +155,7 @@ class ChatProvider extends ChangeNotifier {
     // 🎯 ОПТИМИЗАЦИЯ: КЭШ СООБЩЕНИЙ
     // =====================================================
 
+    /// Возвращает кэш, если он есть и не протух, иначе null.
     List<Message>? getCachedMessages(int chatId) {
         final cached = _messagesCache[chatId];
         if (cached == null) return null;
@@ -157,6 +164,14 @@ class ChatProvider extends ChangeNotifier {
             return null;
         }
         return cached.messages;
+    }
+
+    /// 🎯 Уровень 1: геттер — есть ли свежий кэш для чата.
+    /// Используется в openChat, чтобы не дёргать сеть.
+    bool hasFreshCache(int chatId) {
+        final cached = _messagesCache[chatId];
+        if (cached == null) return false;
+        return DateTime.now().difference(cached.cachedAt) <= _cacheTtl;
     }
 
     void _cacheMessages(int chatId, List<Message> messages) {
@@ -465,6 +480,8 @@ class ChatProvider extends ChangeNotifier {
             _resetSearchState();
 
             final cached = getCachedMessages(chatId);
+            final hasFresh = hasFreshCache(chatId);
+
             if (cached != null && cached.isNotEmpty) {
                 _messages = List.from(cached);
                 AppLogger.info(
@@ -483,6 +500,17 @@ class ChatProvider extends ChangeNotifier {
 
             notifyListeners();
 
+            // 🎯 УРОВЕНЬ 1: если кэш свежий — в сеть НЕ идём.
+            // Свежие сообщения придут по Socket.IO.
+            // Пользователь может принудительно обновить pull-to-refresh.
+            if (hasFresh && cached != null && cached.isNotEmpty) {
+                AppLogger.info(
+                    '✅ Кэш свежий (TTL ${_cacheTtl.inMinutes} мин) — '
+                    'сеть не дёргаем'
+                );
+                return;
+            }
+
             await _loadMessages(chatId);
         } catch (e) {
             AppLogger.error('Ошибка открытия чата', e);
@@ -500,6 +528,7 @@ class ChatProvider extends ChangeNotifier {
         _myLastReadMessageId = 0;
         _hasMoreOld = true;
         _isLoadingMore = false;
+        _isRefreshing = false;
 
         // 🎯 Сбрасываем состояние поиска при закрытии чата
         _resetSearchState();
@@ -508,14 +537,35 @@ class ChatProvider extends ChangeNotifier {
     }
 
     // =====================================================
+    // 🔄 PULL-TO-REFRESH (Уровень 1)
+    // =====================================================
+    // Принудительно тянет сообщения с сервера, минуя кэш.
+    // Вызывается из RefreshIndicator на экране чата.
+    // =====================================================
+    Future<void> refreshFromServer() async {
+        if (_activeChat == null) return;
+
+        final chatId = _activeChat!.id;
+        AppLogger.info('🔄 Принудительное обновление чата #$chatId');
+
+        _isRefreshing = true;
+        notifyListeners();
+
+        try {
+            _invalidateCache(chatId);
+            await _loadMessages(chatId);
+        } catch (e) {
+            AppLogger.error('Ошибка refreshFromServer', e);
+        }
+
+        _isRefreshing = false;
+        notifyListeners();
+    }
+
+    // =====================================================
     // 🔎 ПОИСК ПО СООБЩЕНИЯМ
     // =====================================================
-    // Поиск работает только в активном чате.
-    // Мин. длина запроса — 2 символа (согласовано с backend).
-    // Пагинация — через `before` (id-курсор).
-    // =====================================================
 
-    /// Внутренний сброс состояния поиска. Без notifyListeners.
     void _resetSearchState() {
         _isSearching = false;
         _searchQuery = '';
@@ -524,7 +574,6 @@ class ChatProvider extends ChangeNotifier {
         _isSearchLoading = false;
     }
 
-    /// Включить режим поиска.
     void openSearch() {
         if (_activeChat == null) return;
 
@@ -538,7 +587,6 @@ class ChatProvider extends ChangeNotifier {
         notifyListeners();
     }
 
-    /// Выключить режим поиска и очистить результаты.
     void closeSearch() {
         if (!_isSearching) return;
 
@@ -548,8 +596,6 @@ class ChatProvider extends ChangeNotifier {
         notifyListeners();
     }
 
-    /// Поиск по сообщениям в активном чате.
-    /// Минимум 2 символа. Если меньше — результаты очищаются.
     Future<void> searchMessages(String query) async {
         if (_activeChat == null) return;
 
@@ -597,7 +643,6 @@ class ChatProvider extends ChangeNotifier {
         notifyListeners();
     }
 
-    /// Подгрузка следующей страницы результатов поиска.
     Future<void> loadMoreSearchResults() async {
         if (!_isSearching) return;
         if (!_searchHasMore) return;
@@ -715,9 +760,6 @@ class ChatProvider extends ChangeNotifier {
         }
     }
 
-    // =====================================================
-    // 👥 ГРУППЫ: СОЗДАНИЕ
-    // =====================================================
     Future<Chat?> createGroup({
         required String name,
         String? description,
@@ -779,9 +821,6 @@ class ChatProvider extends ChangeNotifier {
         }
     }
 
-    // =====================================================
-    // 👥 ГРУППЫ: РЕДАКТИРОВАНИЕ
-    // =====================================================
     Future<bool> updateGroup(
         int chatId, {
         String? name,
@@ -835,9 +874,6 @@ class ChatProvider extends ChangeNotifier {
         }
     }
 
-    // =====================================================
-    // 👥 ГРУППЫ: ВЫХОД
-    // =====================================================
     Future<bool> leaveGroup(int chatId) async {
         if (_authProvider?.user == null) {
             AppLogger.warn('leaveGroup: пользователь не авторизован');
@@ -883,9 +919,6 @@ class ChatProvider extends ChangeNotifier {
         }
     }
 
-    // =====================================================
-    // 🔕 MUTE / UNMUTE УВЕДОМЛЕНИЙ ПО ЧАТУ
-    // =====================================================
     Future<bool> toggleMute(int chatId) async {
         final idx = _chats.indexWhere((c) => c.id == chatId);
         if (idx < 0) {
@@ -902,7 +935,6 @@ class ChatProvider extends ChangeNotifier {
                 : '🔔 Unmute чата #$chatId',
         );
 
-        // 🎯 Оптимистично обновляем локально
         _chats[idx] = chat.copyWith(isMuted: newMuted);
         if (_activeChat?.id == chatId) {
             _activeChat = _activeChat!.copyWith(isMuted: newMuted);
@@ -915,7 +947,6 @@ class ChatProvider extends ChangeNotifier {
                 : await ApiService.unmuteChat(chatId);
 
             if (!response.isSuccess) {
-                // 🎯 Откат при ошибке
                 AppLogger.warn('Ошибка toggleMute: ${response.error}');
                 _chats[idx] = chat;
                 if (_activeChat?.id == chatId) {
@@ -927,7 +958,6 @@ class ChatProvider extends ChangeNotifier {
                 return false;
             }
 
-            // 🎯 Синхронизируем mute с NotificationService
             NotificationService.setChatMuted(chatId, newMuted);
 
             _chatsError = null;
@@ -941,7 +971,6 @@ class ChatProvider extends ChangeNotifier {
             return true;
         } catch (e) {
             AppLogger.error('Ошибка toggleMute', e);
-            // 🎯 Откат
             _chats[idx] = chat;
             if (_activeChat?.id == chatId) {
                 _activeChat = _activeChat!.copyWith(isMuted: !newMuted);
@@ -953,7 +982,6 @@ class ChatProvider extends ChangeNotifier {
         }
     }
 
-    /// 🎯 Проверка: замьючен ли чат?
     bool isMuted(int chatId) {
         final idx = _chats.indexWhere((c) => c.id == chatId);
         if (idx < 0) return false;
@@ -1348,10 +1376,6 @@ class ChatProvider extends ChangeNotifier {
         return _chats.fold<int>(0, (sum, chat) => sum + chat.unreadCount);
     }
 
-    // =====================================================
-    // 📤 ОТПРАВКА
-    // =====================================================
-
     String? canWriteToActiveChat() {
         if (_activeChat == null || _authProvider == null) {
             return 'Чат не открыт';
@@ -1376,7 +1400,6 @@ class ChatProvider extends ChangeNotifier {
         }
 
         if (chatType == 'group') {
-            // 🎯 В группе пишет ЛЮБОЙ участник (member или admin).
             if (_activeChat!.isMember) return null;
             return 'Вы не участник группы';
         }
@@ -1513,10 +1536,6 @@ class ChatProvider extends ChangeNotifier {
         return result;
     }
 
-    // =====================================================
-    // 😀 РЕАКЦИИ
-    // =====================================================
-
     Future<bool> addReaction(int messageId, String emoji) async {
         if (_authProvider?.user == null) return false;
         final userId = _authProvider!.user!.id;
@@ -1616,10 +1635,6 @@ class ChatProvider extends ChangeNotifier {
         notifyListeners();
     }
 
-    // =====================================================
-    // ✏️ РЕДАКТИРОВАНИЕ
-    // =====================================================
-
     Future<bool> editMessage(int messageId, String newText) async {
         try {
             final response = await ApiService.editMessage(messageId, newText);
@@ -1641,10 +1656,6 @@ class ChatProvider extends ChangeNotifier {
             return false;
         }
     }
-
-    // =====================================================
-    // 🗑️ УДАЛЕНИЕ
-    // =====================================================
 
     Future<bool> deleteMessage(int messageId) async {
         try {
@@ -1668,13 +1679,6 @@ class ChatProvider extends ChangeNotifier {
         }
     }
 
-    // =====================================================
-    // 🧹 ОЧИСТКА ИСТОРИИ ЧАТА (soft-delete)
-    // =====================================================
-    // Вызывается из UI (пункт меню «Очистить историю»).
-    // Удаляет все сообщения активного чата (soft-delete на сервере).
-    // После успеха очищает локальный список и кэш.
-    // =====================================================
     Future<bool> clearHistory() async {
         if (_activeChat == null) {
             AppLogger.warn('clearHistory: нет активного чата');
@@ -1697,7 +1701,6 @@ class ChatProvider extends ChangeNotifier {
             final cleared = response.data ?? 0;
             AppLogger.success('История очищена: $cleared сообщений');
 
-            // 🎯 Локально очищаем список сообщений и кэш
             _messages = [];
             _invalidateCache(chatId);
 
@@ -1711,10 +1714,6 @@ class ChatProvider extends ChangeNotifier {
             return false;
         }
     }
-
-    // =====================================================
-    // ⌨️ ПЕЧАТАЕТ
-    // =====================================================
 
     void sendTyping() {
         if (_activeChat == null) return;
@@ -1754,10 +1753,6 @@ class ChatProvider extends ChangeNotifier {
         _myTypingThrottleTimer?.cancel();
         _myTypingThrottleTimer = null;
     }
-
-    // =====================================================
-    // 📥 ОБРАБОТКА СОБЫТИЙ
-    // =====================================================
 
     void _handleNewMessage(Map<String, dynamic> data) {
         try {
@@ -1863,8 +1858,6 @@ class ChatProvider extends ChangeNotifier {
         }
     }
 
-    // 🎯 CLEAR: очистка истории чата по socket-событию
-    // Приходит всем участникам чата, когда кто-то очистил историю.
     void _handleHistoryCleared(Map<String, dynamic> data) {
         final chatId = data['chatId'] as int?;
         if (chatId == null) return;
@@ -1943,10 +1936,6 @@ class ChatProvider extends ChangeNotifier {
         }
     }
 
-    // =====================================================
-    // 🛠️ ОЧИСТКА
-    // =====================================================
-
     Future<void> clear() async {
         await _newMessageSub?.cancel();
         await _userTypingSub?.cancel();
@@ -1982,11 +1971,11 @@ class ChatProvider extends ChangeNotifier {
         _isLoadingChats = false;
         _isLoadingMessages = false;
         _isSendingMessage = false;
+        _isRefreshing = false;
         _hasMoreOld = true;
         _isLoadingMore = false;
         _messagesCache.clear();
 
-        // 🎯 Сброс состояния поиска
         _resetSearchState();
 
         notifyListeners();
