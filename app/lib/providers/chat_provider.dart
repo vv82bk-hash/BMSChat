@@ -12,7 +12,8 @@
 // 🎯 FIX (web upload): sendFile принимает XFile вместо String
 // 🎯 ОПТИМИЗАЦИЯ: кэш сообщений (_messagesCache) + время последней
 //    загрузки — повторное открытие чата мгновенно.
-// 🎯 ГРУППЫ: createGroup + правки canWriteToActiveChat для group
+// 🎯 ГРУППЫ: createGroup + updateGroup + leaveGroup + правки
+//    canWriteToActiveChat для group
 // =====================================================
 
 import 'dart:async';
@@ -537,12 +538,6 @@ class ChatProvider extends ChangeNotifier {
     // =====================================================
     // 👥 ГРУППЫ: СОЗДАНИЕ
     // =====================================================
-    // 🎯 Группа — как канал, но:
-    //   • type: 'group' (вместо 'channel')
-    //   • без isPrivate (всегда false — только по приглашению)
-    //   • без emoji (у группы нет иконки-эмодзи)
-    //   • писать может ЛЮБОЙ участник (см. canWriteToActiveChat)
-    // =====================================================
     Future<Chat?> createGroup({
         required String name,
         String? description,
@@ -601,6 +596,110 @@ class ChatProvider extends ChangeNotifier {
             _chatsError = 'Ошибка сети';
             notifyListeners();
             return null;
+        }
+    }
+
+    // =====================================================
+    // 👥 ГРУППЫ: РЕДАКТИРОВАНИЕ
+    // =====================================================
+    Future<bool> updateGroup(
+        int chatId, {
+        String? name,
+        String? description,
+    }) async {
+        AppLogger.info('✏️ Редактирование группы #$chatId');
+
+        if (name == null && description == null) {
+            AppLogger.warn('updateGroup: нечего обновлять');
+            return false;
+        }
+
+        try {
+            final response = await ApiService.updateChat(
+                chatId,
+                name: name,
+                description: description,
+            );
+
+            if (!response.isSuccess) {
+                AppLogger.warn('Ошибка редактирования группы: ${response.error}');
+                _chatsError = response.error ?? 'Ошибка редактирования';
+                notifyListeners();
+                return false;
+            }
+
+            final idx = _chats.indexWhere((c) => c.id == chatId);
+            if (idx >= 0) {
+                _chats[idx] = _chats[idx].copyWith(
+                    name: name,
+                    description: description,
+                );
+            }
+
+            if (_activeChat?.id == chatId) {
+                _activeChat = _activeChat!.copyWith(
+                    name: name,
+                    description: description,
+                );
+            }
+
+            _chatsError = null;
+            notifyListeners();
+            AppLogger.success('Группа отредактирована');
+            return true;
+        } catch (e) {
+            AppLogger.error('Ошибка редактирования группы', e);
+            _chatsError = 'Ошибка сети';
+            notifyListeners();
+            return false;
+        }
+    }
+
+    // =====================================================
+    // 👥 ГРУППЫ: ВЫХОД
+    // =====================================================
+    Future<bool> leaveGroup(int chatId) async {
+        if (_authProvider?.user == null) {
+            AppLogger.warn('leaveGroup: пользователь не авторизован');
+            return false;
+        }
+
+        final userId = _authProvider!.user!.id;
+        AppLogger.info('🚪 Выход из группы #$chatId');
+
+        try {
+            final response =
+                await ApiService.removeChatMember(chatId, userId);
+
+            if (!response.isSuccess) {
+                AppLogger.warn('Ошибка выхода: ${response.error}');
+                _chatsError = response.error ?? 'Ошибка выхода';
+                notifyListeners();
+                return false;
+            }
+
+            _chats.removeWhere((c) => c.id == chatId);
+
+            if (_activeChat?.id == chatId) {
+                closeChat();
+            }
+
+            if (_pinnedChatIds.contains(chatId)) {
+                _pinnedChatIds.remove(chatId);
+                await _savePinnedChats();
+            }
+
+            _invalidateCache(chatId);
+
+            _chatsError = null;
+            notifyListeners();
+            AppLogger.success('Вы вышли из группы #$chatId');
+            return true;
+        } catch (e) {
+            AppLogger.error('Ошибка выхода из группы', e);
+            _chatsError = 'Ошибка сети';
+            notifyListeners();
+            return false;
         }
     }
 
@@ -1021,7 +1120,6 @@ class ChatProvider extends ChangeNotifier {
 
         if (chatType == 'group') {
             // 🎯 В группе пишет ЛЮБОЙ участник (member или admin).
-            // Членство важнее глобальных прав: если пригласили — доверяем.
             if (_activeChat!.isMember) return null;
             return 'Вы не участник группы';
         }

@@ -8,6 +8,7 @@
 //   🎯 2026-09-19: console.log для диагностики в stdout (Onreza показывает)
 //   🎯 2026-10-09: other_user_avatar, other_user_id для личных чатов
 //   🎯 2026-10-09 (Группы): создание группы — любому подтверждённому
+//   🎯 2026-10-09 (Группы): редактирование группы + выход из группы
 // =====================================================
 
 const express = require('express');
@@ -21,6 +22,7 @@ const {
     getChatMembers,
     canManageChannel,
     canManageChannelMembers,
+    isCommanderOrHigher,
 } = require('../utils/chatAccess');
 const logger = require('../utils/logger');
 
@@ -121,9 +123,6 @@ router.get('/', authMiddleware, async (req, res) => {
 // =====================================================
 // ➕ POST /api/chats
 // =====================================================
-// 🎯 Группа: любой подтверждённый пользователь может создать.
-// 🎯 Канал: только тот, у кого есть can_create_feed (Боец+).
-// =====================================================
 router.post('/', authMiddleware, async (req, res) => {
     try {
         const {
@@ -149,7 +148,6 @@ router.post('/', authMiddleware, async (req, res) => {
 
         // 🎯 Проверка прав на создание
         if (type === 'channel') {
-            // Канал — только Боец+ (can_create_feed)
             const canCreate = await pool.query(`
                 SELECT 1 FROM user_roles ur
                 INNER JOIN roles r ON r.id = ur.role_id
@@ -472,7 +470,7 @@ router.post('/:id/members/bulk', authMiddleware, async (req, res) => {
 });
 
 // =====================================================
-// ✏️ PUT /api/chats/:id — редактирование канала
+// ✏️ PUT /api/chats/:id — редактирование канала или группы
 // =====================================================
 router.put('/:id', authMiddleware, async (req, res) => {
     try {
@@ -488,24 +486,53 @@ router.put('/:id', authMiddleware, async (req, res) => {
 
         const { name, description, emoji, isPrivate } = req.body;
 
-        const canManage = await canManageChannel(chatId, req.user.id);
-        console.log('  canManage:', canManage);
-
-        if (!canManage) {
-            return res.status(403).json({
-                error: 'Только создатель, админ или командир может редактировать канал',
-            });
-        }
-
+        // 1. Проверка: существует ли чат и какого типа
         const chatCheck = await pool.query(
-            'SELECT type FROM chats WHERE id = $1',
+            'SELECT type, created_by FROM chats WHERE id = $1',
             [chatId]
         );
         if (chatCheck.rows.length === 0) {
             return res.status(404).json({ error: 'Чат не найден' });
         }
-        if (chatCheck.rows[0].type !== 'channel') {
-            return res.status(400).json({ error: 'Редактирование доступно только для каналов' });
+
+        const chatType = chatCheck.rows[0].type;
+        const createdBy = chatCheck.rows[0].created_by;
+
+        // 🎯 Редактирование: только group или channel
+        if (chatType !== 'channel' && chatType !== 'group') {
+            return res.status(400).json({
+                error: 'Редактирование доступно только для каналов и групп',
+            });
+        }
+
+        // 🎯 Права:
+        //    - Канал: canManageChannel (создатель + командир/админ)
+        //    - Группа: создатель или командир/админ
+        if (chatType === 'channel') {
+            const canManage = await canManageChannel(chatId, req.user.id);
+            if (!canManage) {
+                return res.status(403).json({
+                    error: 'Только создатель, админ или командир может редактировать канал',
+                });
+            }
+        } else {
+            // group
+            const isCreator = createdBy === req.user.id;
+            const isAdmin = await isCommanderOrHigher(req.user.id);
+
+            if (!isCreator && !isAdmin) {
+                return res.status(403).json({
+                    error: 'Только создатель или командир может редактировать группу',
+                });
+            }
+
+            // 🎯 У группы нельзя менять is_private и emoji — игнорируем
+            if (isPrivate !== undefined) {
+                console.log('  ⚠️ isPrivate проигнорирован для группы');
+            }
+            if (emoji !== undefined) {
+                console.log('  ⚠️ emoji проигнорирован для группы');
+            }
         }
 
         if (name !== undefined) {
@@ -529,11 +556,12 @@ router.put('/:id', authMiddleware, async (req, res) => {
             updates.push(`description = $${idx++}`);
             values.push(description || null);
         }
-        if (emoji !== undefined) {
+        // 🎯 emoji и isPrivate — только для каналов
+        if (chatType === 'channel' && emoji !== undefined) {
             updates.push(`emoji = $${idx++}`);
             values.push(emoji);
         }
-        if (isPrivate !== undefined) {
+        if (chatType === 'channel' && isPrivate !== undefined) {
             updates.push(`is_private = $${idx++}`);
             values.push(Boolean(isPrivate));
         }
@@ -553,14 +581,15 @@ router.put('/:id', authMiddleware, async (req, res) => {
             WHERE id = $${idx}
         `, values);
 
-        logger.success('Канал отредактирован', {
+        logger.success('Чат отредактирован', {
             chatId,
+            type: chatType,
             fields: Object.keys({ name, description, emoji, isPrivate })
                 .filter((k) => req.body[k] !== undefined),
             by: req.user.id,
         });
 
-        res.json({ message: 'Канал обновлён' });
+        res.json({ message: 'Чат обновлён' });
     } catch (error) {
         console.log('🔴 PUT /api/chats ERROR');
         console.log('  chatId:', req.params.id);
@@ -571,7 +600,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
         console.log('  detail:', error.detail);
         console.log('  stack:', error.stack);
 
-        logger.error('Ошибка редактирования канала', error);
+        logger.error('Ошибка редактирования чата', error);
         res.status(500).json({ error: 'Ошибка сервера' });
     }
 });
@@ -726,7 +755,10 @@ router.post('/:id/members', authMiddleware, async (req, res) => {
 });
 
 // =====================================================
-// 🗑️ DELETE /api/chats/:id/members/:userId
+// 🗑️ DELETE /api/chats/:id/members/:userId — выход или удаление
+// =====================================================
+// 🎯 Пользователь может удалить САМ СЕБЯ — это «выход из группы».
+// 🎯 Удаление других — только создатель/админ/командир.
 // =====================================================
 router.delete('/:id/members/:userId', authMiddleware, async (req, res) => {
     try {
@@ -740,31 +772,50 @@ router.delete('/:id/members/:userId', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'Некорректный ID пользователя' });
         }
 
-        const canManage = await canManageChannelMembers(chatId, req.user.id);
-        if (!canManage) {
-            return res.status(403).json({
-                error: 'Недостаточно прав для удаления участника',
-            });
+        // 🎯 Проверка: это выход (себя) или удаление (другого)?
+        const isSelfLeave = userId === req.user.id;
+
+        if (!isSelfLeave) {
+            const canManage = await canManageChannelMembers(chatId, req.user.id);
+            if (!canManage) {
+                return res.status(403).json({
+                    error: 'Недостаточно прав для удаления участника',
+                });
+            }
         }
 
+        // 🎯 Создатель канала/группы не может выйти из своего чата
         const chatResult = await pool.query(
-            'SELECT created_by FROM chats WHERE id = $1',
+            'SELECT created_by, type FROM chats WHERE id = $1',
             [chatId]
         );
-        if (chatResult.rows.length > 0 && chatResult.rows[0].created_by === userId) {
+        if (chatResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Чат не найден' });
+        }
+
+        const createdBy = chatResult.rows[0].created_by;
+        const chatType = chatResult.rows[0].type;
+
+        if (isSelfLeave && createdBy === userId) {
             return res.status(400).json({
-                error: 'Нельзя удалить создателя канала',
+                error: 'Создатель не может покинуть свой чат. Удалите чат целиком.',
             });
         }
 
+        // 🎯 Удаляем участника
         await pool.query(
             'DELETE FROM chat_members WHERE chat_id = $1 AND user_id = $2',
             [chatId, userId]
         );
 
-        logger.info('Участник убран', { chatId, userId, by: req.user.id });
+        logger.info(
+            isSelfLeave ? 'Пользователь вышел из чата' : 'Участник убран',
+            { chatId, userId, type: chatType, by: req.user.id }
+        );
 
-        res.json({ message: 'Участник убран' });
+        res.json({
+            message: isSelfLeave ? 'Вы вышли из чата' : 'Участник убран',
+        });
     } catch (error) {
         console.log('🔴 DELETE /api/chats/:id/members/:userId ERROR:', error.message);
         console.log('STACK:', error.stack);

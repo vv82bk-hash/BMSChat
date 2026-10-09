@@ -17,6 +17,7 @@
 // 🎯 FIX (дубли + анимация): openChat перенесён сюда из ChatsScreen
 // 🎯 ГОЛОСОВЫЕ: запись OGG/Opus, отправка, UI записи
 // 🎯 ПРОФИЛЬ: тап по имени отправителя → UserProfileScreen
+// 🎯 ГРУППЫ: настройки группы + выход из группы
 // =====================================================
 
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
@@ -36,6 +37,7 @@ import '../widgets/animated_message_wrapper.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/reaction_picker.dart';
 import 'channel_settings_screen.dart';
+import 'group_settings_screen.dart';
 import 'user_profile_screen.dart';
 import 'users_screen.dart';
 
@@ -306,7 +308,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
     // ============================================
     // 📎 ВЫБОР ФАЙЛА
-    // 🎯 FIX: передаём XFile (не .path) — работает на web
     // ============================================
     Future<void> _pickFile() async {
         _showInputPanel();
@@ -783,6 +784,103 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     // ============================================
+    // 🎯 ГРУППЫ: НАСТРОЙКИ
+    // ============================================
+    bool _canManageGroup(Chat chat) {
+        final me = Provider.of<AuthProvider>(context, listen: false).user;
+        if (me == null) return false;
+
+        if (chat.createdBy == me.id) return true;
+        if (me.isAdmin || me.isCommander) return true;
+
+        return false;
+    }
+
+    bool _canLeaveGroup(Chat chat) {
+        final me = Provider.of<AuthProvider>(context, listen: false).user;
+        if (me == null) return false;
+
+        // Создатель не может покинуть группу
+        if (chat.createdBy == me.id) return false;
+
+        return chat.isMember;
+    }
+
+    Future<void> _openGroupSettings(Chat chat) async {
+        final result = await Navigator.push<dynamic>(
+            context,
+            MaterialPageRoute(
+                builder: (_) => GroupSettingsScreen(chat: chat),
+            ),
+        );
+
+        if (!mounted) return;
+
+        // 🎯 Если пользователь вышел — закрываем экран чата
+        if (result == 'left') {
+            Navigator.pop(context);
+            return;
+        }
+
+        // 🎯 Если что-то изменилось — перезагружаем чаты
+        if (result == true) {
+            final chatProvider =
+                Provider.of<ChatProvider>(context, listen: false);
+            await chatProvider.loadChats();
+        }
+    }
+
+    Future<void> _leaveChat(Chat chat) async {
+        final confirmed = await showDialog<bool>(
+            context: context,
+            builder: (_) => AlertDialog(
+                backgroundColor: RastaTheme.surface,
+                title: Text(
+                    chat.isGroup ? 'Покинуть группу?' : 'Покинуть чат?',
+                    style: const TextStyle(color: RastaTheme.textPrimary),
+                ),
+                content: Text(
+                    chat.isGroup
+                        ? 'Вы выйдете из группы «${chat.title}». '
+                            'Вернуться можно будет только по приглашению.'
+                        : 'Вы уверены, что хотите покинуть чат «${chat.title}»?',
+                    style: const TextStyle(color: RastaTheme.textSecondary),
+                ),
+                actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text(
+                            'Отмена',
+                            style: TextStyle(color: RastaTheme.textMuted),
+                        ),
+                    ),
+                    TextButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text(
+                            'Покинуть',
+                            style: TextStyle(color: RastaTheme.error),
+                        ),
+                    ),
+                ],
+            ),
+        );
+
+        if (confirmed != true || !mounted) return;
+
+        final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+
+        final success = await chatProvider.leaveGroup(chat.id);
+
+        if (!mounted) return;
+
+        if (success) {
+            Navigator.pop(context);
+        } else {
+            _showError(chatProvider.chatsError ?? 'Не удалось выйти из чата');
+        }
+    }
+
+    // ============================================
     // 🎯 ШАГ 15: ВСТУПИТЬ В КАНАЛ
     // ============================================
     Future<void> _joinChannel() async {
@@ -811,7 +909,13 @@ class _ChatScreenState extends State<ChatScreen> {
     Future<void> _openChatMenu(Chat chat) async {
         final canManage = _canManageChannel(chat);
         final isMember = chat.isMember;
-        final canLeave = (chat.isChannel || chat.type == 'group') && isMember;
+
+        // 🎯 Для каналов и групп — можно покинуть
+        final canLeave = (chat.isChannel || chat.isGroup) && isMember;
+
+        // 🎯 Для группы — если не создатель, можно покинуть
+        final canLeaveGroupOnly =
+            chat.isGroup && isMember && _canLeaveGroup(chat);
 
         final action = await showModalBottomSheet<String>(
             context: context,
@@ -873,6 +977,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                     Navigator.pop(context, 'clear'),
                             ),
 
+                            // 🎯 Настройки канала (создатель или командир)
                             if (chat.isChannel && canManage)
                                 _menuTile(
                                     icon: Icons.settings_outlined,
@@ -881,10 +986,32 @@ class _ChatScreenState extends State<ChatScreen> {
                                         Navigator.pop(context, 'settings'),
                                 ),
 
-                            if (canLeave)
+                            // 🎯 Настройки группы (создатель или командир)
+                            if (chat.isGroup && _canManageGroup(chat))
+                                _menuTile(
+                                    icon: Icons.settings_outlined,
+                                    title: 'Настройки группы',
+                                    onTap: () => Navigator.pop(
+                                        context,
+                                        'group_settings',
+                                    ),
+                                ),
+
+                            // 🎯 Покинуть канал
+                            if (chat.isChannel && canLeave)
                                 _menuTile(
                                     icon: Icons.logout,
-                                    title: 'Покинуть чат',
+                                    title: 'Покинуть канал',
+                                    color: RastaTheme.error,
+                                    onTap: () =>
+                                        Navigator.pop(context, 'leave'),
+                                ),
+
+                            // 🎯 Покинуть группу (только если не создатель)
+                            if (canLeaveGroupOnly)
+                                _menuTile(
+                                    icon: Icons.logout,
+                                    title: 'Покинуть группу',
                                     color: RastaTheme.error,
                                     onTap: () =>
                                         Navigator.pop(context, 'leave'),
@@ -918,8 +1045,11 @@ class _ChatScreenState extends State<ChatScreen> {
             case 'settings':
                 _openChannelSettings(chat);
                 break;
+            case 'group_settings':
+                _openGroupSettings(chat);
+                break;
             case 'leave':
-                _showInfo('Выход из чата — скоро');
+                _leaveChat(chat);
                 break;
         }
     }
