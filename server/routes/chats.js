@@ -10,6 +10,7 @@
 //   🎯 2026-10-09 (Группы): создание группы — любому подтверждённому
 //   🎯 2026-10-09 (Группы): редактирование группы + выход из группы
 //   🎯 2026-10-09 (Mute): is_muted в GET /api/chats + mute/unmute роуты
+//   🎯 2026-10-09 (Clear): POST /api/chats/:id/clear — soft-delete истории
 // =====================================================
 
 const express = require('express');
@@ -452,6 +453,107 @@ router.delete('/:id/mute', authMiddleware, async (req, res) => {
         console.log('🔴 DELETE /api/chats/:id/mute ERROR:', error.message);
         console.log('STACK:', error.stack);
         logger.error('Ошибка unmute', error);
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
+
+// =====================================================
+// 🧹 POST /api/chats/:id/clear — очистка истории (soft-delete)
+// =====================================================
+// Soft-delete всех сообщений чата:
+//   • is_deleted = TRUE
+//   • text = NULL
+//   • updated_at = NOW()
+// Права:
+//   • private  — любой участник
+//   • group    — создатель или командир+
+//   • channel  — canManageChannel (создатель, админ, командир)
+// =====================================================
+router.post('/:id/clear', authMiddleware, async (req, res) => {
+    try {
+        const chatId = parseInt(req.params.id, 10);
+        if (!Number.isInteger(chatId) || chatId <= 0) {
+            return res.status(400).json({ error: 'Некорректный ID чата' });
+        }
+
+        // 1. Проверяем существование чата и получаем его тип + создателя
+        const chatResult = await pool.query(
+            'SELECT type, created_by, is_active FROM chats WHERE id = $1',
+            [chatId]
+        );
+
+        if (chatResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Чат не найден' });
+        }
+
+        const { type: chatType, created_by: createdBy, is_active: isActive } =
+            chatResult.rows[0];
+
+        if (!isActive) {
+            return res.status(400).json({ error: 'Чат деактивирован' });
+        }
+
+        // 2. Проверяем права на очистку
+        let allowed = false;
+
+        if (chatType === 'private') {
+            // Личный чат — доступ у участников
+            const access = await checkChatAccess(chatId, req.user.id);
+            allowed = access.allowed;
+        } else if (chatType === 'group') {
+            // Группа — создатель или командир+
+            const isCreator = createdBy === req.user.id;
+            const isAdmin = await isCommanderOrHigher(req.user.id);
+            allowed = isCreator || isAdmin;
+        } else if (chatType === 'channel') {
+            // Канал — canManageChannel
+            allowed = await canManageChannel(chatId, req.user.id);
+        }
+
+        if (!allowed) {
+            return res.status(403).json({
+                error: 'Недостаточно прав для очистки истории этого чата',
+            });
+        }
+
+        // 3. Soft-delete всех неудалённых сообщений чата
+        const updateResult = await pool.query(`
+            UPDATE messages
+            SET is_deleted = TRUE,
+                text = NULL,
+                updated_at = NOW()
+            WHERE chat_id = $1
+              AND is_deleted = FALSE
+        `, [chatId]);
+
+        const cleared = updateResult.rowCount || 0;
+
+        logger.success('История чата очищена (soft-delete)', {
+            chatId,
+            chatType,
+            cleared,
+            by: req.user.id,
+        });
+
+        // 4. Socket.IO-уведомление всем в комнате чата
+        const io = req.app.get('io');
+        if (io) {
+            io.to(`chat_${chatId}`).emit('history_cleared', {
+                chatId,
+                cleared,
+                clearedBy: req.user.id,
+                clearedAt: new Date().toISOString(),
+            });
+        }
+
+        res.json({
+            message: 'История очищена',
+            cleared,
+        });
+    } catch (error) {
+        console.log('🔴 POST /api/chats/:id/clear ERROR:', error.message);
+        console.log('STACK:', error.stack);
+        logger.error('Ошибка очистки истории', error);
         res.status(500).json({ error: 'Ошибка сервера' });
     }
 });

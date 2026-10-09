@@ -21,6 +21,7 @@
 // 🎯 MUTE: пункт «Отключить/Включить уведомления»
 // 🎯 ИНФО: переход на ChatInfoScreen
 // 🎯 ПОИСК: AppBar-поле + результаты + debounce + пагинация
+// 🎯 CLEAR: пункт «Очистить историю» → подтверждение + вызов
 // =====================================================
 
 import 'dart:async';
@@ -1010,6 +1011,59 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     // ============================================
+    // 🧹 ОЧИСТКА ИСТОРИИ ЧАТА (soft-delete)
+    // ============================================
+    Future<void> _clearHistory(Chat chat) async {
+        final confirmed = await showDialog<bool>(
+            context: context,
+            builder: (_) => AlertDialog(
+                backgroundColor: RastaTheme.surface,
+                title: const Text(
+                    'Очистить историю?',
+                    style: TextStyle(color: RastaTheme.textPrimary),
+                ),
+                content: Text(
+                    'Все сообщения в чате «${chat.title}» будут помечены '
+                    'как удалённые. Восстановить их нельзя.',
+                    style: const TextStyle(color: RastaTheme.textSecondary),
+                ),
+                actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text(
+                            'Отмена',
+                            style: TextStyle(color: RastaTheme.textMuted),
+                        ),
+                    ),
+                    TextButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text(
+                            'Очистить',
+                            style: TextStyle(color: RastaTheme.error),
+                        ),
+                    ),
+                ],
+            ),
+        );
+
+        if (confirmed != true || !mounted) return;
+
+        final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+
+        final success = await chatProvider.clearHistory();
+
+        if (!mounted) return;
+
+        if (success) {
+            _showInfo('История очищена');
+        } else {
+            _showError(
+                chatProvider.messagesError ?? 'Не удалось очистить историю',
+            );
+        }
+    }
+
+    // ============================================
     // 🎯 ШАГ 15: ВСТУПИТЬ В КАНАЛ
     // ============================================
     Future<void> _joinChannel() async {
@@ -1174,7 +1228,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 await _toggleMute(chat);
                 break;
             case 'clear':
-                _showInfo('Очистка истории — скоро');
+                await _clearHistory(chat);
                 break;
             case 'settings':
                 _openChannelSettings(chat);

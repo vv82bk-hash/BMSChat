@@ -8,6 +8,7 @@
 //   • Галочки прочтения
 //   • Реакции, редактирование, удаление
 //   • 👑 Уведомления о новых новобранцах
+//   • 🧹 Очистка истории чата (history_cleared)
 // 🎯 FIX: transports ['websocket', 'polling'] — fallback для мобильных.
 // =====================================================
 
@@ -88,6 +89,12 @@ class SocketService {
         StreamController<Map<String, dynamic>>.broadcast();
     static Stream<Map<String, dynamic>> get onMessageDeleted =>
         _messageDeletedController.stream;
+
+    // 🎯 CLEAR: очистка истории чата
+    static final _historyClearedController =
+        StreamController<Map<String, dynamic>>.broadcast();
+    static Stream<Map<String, dynamic>> get onHistoryCleared =>
+        _historyClearedController.stream;
 
     static final _reactionAddedController =
         StreamController<Map<String, dynamic>>.broadcast();
@@ -265,6 +272,15 @@ class SocketService {
             }
         });
 
+        // 🧹 Очистка истории чата
+        _socket!.on(SocketEvents.historyCleared, (data) {
+            if (data is Map) {
+                AppLogger.socket('🧹 История очищена', data['chatId']);
+                _historyClearedController
+                    .add(Map<String, dynamic>.from(data));
+            }
+        });
+
         // 😀 Реакция добавлена
         _socket!.on(SocketEvents.reactionAdded, (data) {
             if (data is Map) {
@@ -378,6 +394,7 @@ class SocketService {
         _messageReadController.close();
         _messageEditedController.close();
         _messageDeletedController.close();
+        _historyClearedController.close();
         _reactionAddedController.close();
         _reactionRemovedController.close();
         _onlineCountController.close();

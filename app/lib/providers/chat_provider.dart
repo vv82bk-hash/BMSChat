@@ -17,6 +17,8 @@
 // 🎯 MUTE: toggleMute + isMuted + синхронизация с NotificationService
 // 🎯 ПОИСК: openSearch / closeSearch / searchMessages /
 //    loadMoreSearchResults — поиск по сообщениям в активном чате
+// 🎯 CLEAR: clearHistory — soft-delete истории чата +
+//    обработка socket-события history_cleared
 // =====================================================
 
 import 'dart:async';
@@ -93,6 +95,8 @@ class ChatProvider extends ChangeNotifier {
     StreamSubscription? _userOnlineSub;
     StreamSubscription? _userOfflineSub;
     StreamSubscription? _onlineCountSub;
+    // 🎯 CLEAR: подписка на history_cleared
+    StreamSubscription? _historyClearedSub;
 
     Timer? _myTypingTimer;
     Timer? _myTypingThrottleTimer;
@@ -313,6 +317,11 @@ class ChatProvider extends ChangeNotifier {
         _messageReadSub?.cancel();
         _messageReadSub =
             SocketService.onMessageRead.listen(_handleMessageRead);
+
+        // 🎯 CLEAR: подписка на очистку истории
+        _historyClearedSub?.cancel();
+        _historyClearedSub =
+            SocketService.onHistoryCleared.listen(_handleHistoryCleared);
 
         _userOnlineSub?.cancel();
         _userOnlineSub = SocketService.onUserOnline.listen((data) {
@@ -1660,6 +1669,50 @@ class ChatProvider extends ChangeNotifier {
     }
 
     // =====================================================
+    // 🧹 ОЧИСТКА ИСТОРИИ ЧАТА (soft-delete)
+    // =====================================================
+    // Вызывается из UI (пункт меню «Очистить историю»).
+    // Удаляет все сообщения активного чата (soft-delete на сервере).
+    // После успеха очищает локальный список и кэш.
+    // =====================================================
+    Future<bool> clearHistory() async {
+        if (_activeChat == null) {
+            AppLogger.warn('clearHistory: нет активного чата');
+            return false;
+        }
+
+        final chatId = _activeChat!.id;
+        AppLogger.info('🧹 Очистка истории чата #$chatId');
+
+        try {
+            final response = await ApiService.clearChatHistory(chatId);
+
+            if (!response.isSuccess) {
+                AppLogger.warn('Ошибка очистки: ${response.error}');
+                _messagesError = response.error ?? 'Не удалось очистить';
+                notifyListeners();
+                return false;
+            }
+
+            final cleared = response.data ?? 0;
+            AppLogger.success('История очищена: $cleared сообщений');
+
+            // 🎯 Локально очищаем список сообщений и кэш
+            _messages = [];
+            _invalidateCache(chatId);
+
+            _messagesError = null;
+            notifyListeners();
+            return true;
+        } catch (e) {
+            AppLogger.error('Ошибка очистки истории', e);
+            _messagesError = 'Ошибка сети';
+            notifyListeners();
+            return false;
+        }
+    }
+
+    // =====================================================
     // ⌨️ ПЕЧАТАЕТ
     // =====================================================
 
@@ -1810,6 +1863,22 @@ class ChatProvider extends ChangeNotifier {
         }
     }
 
+    // 🎯 CLEAR: очистка истории чата по socket-событию
+    // Приходит всем участникам чата, когда кто-то очистил историю.
+    void _handleHistoryCleared(Map<String, dynamic> data) {
+        final chatId = data['chatId'] as int?;
+        if (chatId == null) return;
+
+        AppLogger.info('🧹 История чата #$chatId очищена (событие)');
+
+        _invalidateCache(chatId);
+
+        if (_activeChat?.id == chatId) {
+            _messages = [];
+            notifyListeners();
+        }
+    }
+
     void _handleReactionAdded(Map<String, dynamic> data) {
         final messageId = data['messageId'] as int?;
         final userId = data['userId'] as int?;
@@ -1890,6 +1959,7 @@ class ChatProvider extends ChangeNotifier {
         await _userOnlineSub?.cancel();
         await _userOfflineSub?.cancel();
         await _onlineCountSub?.cancel();
+        await _historyClearedSub?.cancel();
 
         _myTypingTimer?.cancel();
         _myTypingThrottleTimer?.cancel();
@@ -1935,6 +2005,7 @@ class ChatProvider extends ChangeNotifier {
         _userOnlineSub?.cancel();
         _userOfflineSub?.cancel();
         _onlineCountSub?.cancel();
+        _historyClearedSub?.cancel();
 
         _myTypingTimer?.cancel();
         _myTypingThrottleTimer?.cancel();

@@ -7,6 +7,7 @@
 // 🎯 FCM: sendFcmToken() + deleteFcmToken()
 // 🎯 MUTE: muteChat() + unmuteChat()
 // 🎯 ПОИСК: searchMessages() — поиск по сообщениям в чате
+// 🎯 CLEAR: clearChatHistory() — soft-delete истории чата
 // =====================================================
 
 import 'dart:async';
@@ -728,6 +729,27 @@ class ApiService {
             ));
         }
         return ApiResponse.error(response.error!, statusCode: response.statusCode);
+    }
+
+    // =====================================================
+    // 🧹 ОЧИСТКА ИСТОРИИ ЧАТА (soft-delete)
+    // =====================================================
+    // POST /api/chats/:chatId/clear
+    // Возвращает количество помеченных как удалённые сообщений.
+    // =====================================================
+    static Future<ApiResponse<int>> clearChatHistory(int chatId) async {
+        final response = await _post('/chats/$chatId/clear');
+
+        if (response.isSuccess) {
+            final data = response.data as Map<String, dynamic>?;
+            final cleared = data?['cleared'] as int? ?? 0;
+            return ApiResponse.success(cleared);
+        }
+
+        return ApiResponse.error(
+            response.error!,
+            statusCode: response.statusCode,
+        );
     }
 
     static Future<ApiResponse<Message>> sendMessage(

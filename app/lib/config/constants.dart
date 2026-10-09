@@ -267,6 +267,7 @@ class SocketEvents {
     // 📥 ЗАПЛАНИРОВАННЫЕ
     static const String messageEdited = 'message_edited';
     static const String messageDeleted = 'message_deleted';
+    static const String historyCleared = 'history_cleared';   // 🎯 CLEAR
     static const String reactionAdded = 'reaction_added';
     static const String reactionRemoved = 'reaction_removed';
 
