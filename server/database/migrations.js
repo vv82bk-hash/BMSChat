@@ -6,6 +6,7 @@
 //
 // 🎤 Добавлена миграция duration для голосовых.
 // 🔔 Добавлена миграция fcm_token для push-уведомлений.
+// 🔕 Добавлена таблица chat_mutes (mute уведомлений).
 //
 // ЗАПУСК:
 //   npm run migrate
@@ -104,6 +105,28 @@ async function runMigrations() {
         console.log('   ✅ Колонка fcm_token добавлена (или уже была)');
 
         // ─────────────────────────────────────────
+        // 5. 🔕 Таблица chat_mutes (отключённые уведомления)
+        // ─────────────────────────────────────────
+        console.log('');
+        console.log('📦 Миграция: таблица chat_mutes');
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS chat_mutes (
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                chat_id INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+                muted_at TIMESTAMPTZ DEFAULT NOW(),
+                PRIMARY KEY (user_id, chat_id)
+            )
+        `);
+        console.log('   ✅ Таблица chat_mutes готова');
+
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_chat_mutes_user_id
+            ON chat_mutes(user_id)
+        `);
+        console.log('   ✅ Индекс idx_chat_mutes_user_id готов');
+
+        // ─────────────────────────────────────────
         // Проверка
         // ─────────────────────────────────────────
         const tables = await pool.query(`
@@ -145,6 +168,19 @@ async function runMigrations() {
             console.log('');
             console.log('🔔 Колонка users.fcm_token:');
             console.log(`   • Тип: ${hasFcmToken.rows[0].data_type}`);
+        }
+
+        // Проверка таблицы chat_mutes
+        const hasChatMutes = await pool.query(`
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_name = 'chat_mutes'
+        `);
+
+        if (hasChatMutes.rows.length > 0) {
+            console.log('');
+            console.log('🔕 Таблица chat_mutes:');
+            console.log('   • Существует');
         }
 
         console.log('');

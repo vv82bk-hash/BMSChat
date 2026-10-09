@@ -9,6 +9,7 @@
 //   🎯 2026-10-09: other_user_avatar, other_user_id для личных чатов
 //   🎯 2026-10-09 (Группы): создание группы — любому подтверждённому
 //   🎯 2026-10-09 (Группы): редактирование группы + выход из группы
+//   🎯 2026-10-09 (Mute): is_muted в GET /api/chats + mute/unmute роуты
 // =====================================================
 
 const express = require('express');
@@ -75,7 +76,12 @@ router.get('/', authMiddleware, async (req, res) => {
                         LIMIT 1
                     )
                     ELSE NULL
-                END as other_user_id
+                END as other_user_id,
+                EXISTS (
+                    SELECT 1 FROM chat_mutes
+                    WHERE chat_mutes.user_id = $1
+                      AND chat_mutes.chat_id = c.id
+                ) as is_muted
             FROM chats c
             LEFT JOIN chat_members cm ON cm.chat_id = c.id AND cm.user_id = $1
             WHERE c.is_active = TRUE
@@ -381,6 +387,71 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
         console.log('🔴 POST /api/chats/:id/join ERROR:', error.message);
         console.log('STACK:', error.stack);
         logger.error('Ошибка вступления в канал', error);
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
+
+// =====================================================
+// 🔕 POST /api/chats/:id/mute — заглушить уведомления
+// =====================================================
+router.post('/:id/mute', authMiddleware, async (req, res) => {
+    try {
+        const chatId = parseInt(req.params.id, 10);
+        if (!Number.isInteger(chatId) || chatId <= 0) {
+            return res.status(400).json({ error: 'Некорректный ID чата' });
+        }
+
+        // 🎯 Проверяем, что пользователь участник чата
+        const access = await checkChatAccess(chatId, req.user.id);
+        if (!access.allowed) {
+            return res.status(403).json({ error: access.reason });
+        }
+
+        await pool.query(`
+            INSERT INTO chat_mutes (user_id, chat_id)
+            VALUES ($1, $2)
+            ON CONFLICT DO NOTHING
+        `, [req.user.id, chatId]);
+
+        logger.info('Уведомления отключены', {
+            userId: req.user.id,
+            chatId,
+        });
+
+        res.json({ message: 'Уведомления отключены', is_muted: true });
+    } catch (error) {
+        console.log('🔴 POST /api/chats/:id/mute ERROR:', error.message);
+        console.log('STACK:', error.stack);
+        logger.error('Ошибка mute', error);
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
+
+// =====================================================
+// 🔔 DELETE /api/chats/:id/mute — включить уведомления
+// =====================================================
+router.delete('/:id/mute', authMiddleware, async (req, res) => {
+    try {
+        const chatId = parseInt(req.params.id, 10);
+        if (!Number.isInteger(chatId) || chatId <= 0) {
+            return res.status(400).json({ error: 'Некорректный ID чата' });
+        }
+
+        await pool.query(`
+            DELETE FROM chat_mutes
+            WHERE user_id = $1 AND chat_id = $2
+        `, [req.user.id, chatId]);
+
+        logger.info('Уведомления включены', {
+            userId: req.user.id,
+            chatId,
+        });
+
+        res.json({ message: 'Уведомления включены', is_muted: false });
+    } catch (error) {
+        console.log('🔴 DELETE /api/chats/:id/mute ERROR:', error.message);
+        console.log('STACK:', error.stack);
+        logger.error('Ошибка unmute', error);
         res.status(500).json({ error: 'Ошибка сервера' });
     }
 });
@@ -756,9 +827,6 @@ router.post('/:id/members', authMiddleware, async (req, res) => {
 
 // =====================================================
 // 🗑️ DELETE /api/chats/:id/members/:userId — выход или удаление
-// =====================================================
-// 🎯 Пользователь может удалить САМ СЕБЯ — это «выход из группы».
-// 🎯 Удаление других — только создатель/админ/командир.
 // =====================================================
 router.delete('/:id/members/:userId', authMiddleware, async (req, res) => {
     try {

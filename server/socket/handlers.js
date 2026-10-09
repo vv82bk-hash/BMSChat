@@ -3,6 +3,7 @@
 // =====================================================
 // 🎯 2026-09-21: queryWithRetry — защита от сбоев Supavisor
 // 🎯 2026-10-09: FCM — push офлайн-участникам
+// 🎯 2026-10-09 (Mute): push не отправляется для замьюченных чатов
 // =====================================================
 
 const { pool } = require('../database/init');
@@ -356,13 +357,15 @@ async function handleSendMessage(io, socket, user, data) {
 // =====================================================
 // 🔔 FCM: PUSH ОФЛАЙН-УЧАСТНИКАМ
 // =====================================================
-// 1. Берём участников чата с fcm_token (кроме отправителя).
+// 1. Берём участников чата с fcm_token (кроме отправителя),
+//    у которых НЕТ записи в chat_mutes.
 // 2. Фильтруем: только те, кто НЕ в onlineUsers.
 // 3. Отправляем push через fcm.sendToTokens.
 // =====================================================
 async function sendPushToOfflineMembers(io, chatId, sender, message) {
     try {
-        // 1. Участники чата с fcm_token (кроме отправителя)
+        // 1. Участники чата с fcm_token, кроме отправителя,
+        //    и БЕЗ mute этого чата
         const result = await queryWithRetry(`
             SELECT u.id, u.fcm_token
             FROM chat_members cm
@@ -370,6 +373,11 @@ async function sendPushToOfflineMembers(io, chatId, sender, message) {
             WHERE cm.chat_id = $1
               AND cm.user_id != $2
               AND u.fcm_token IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM chat_mutes cm_mutes
+                  WHERE cm_mutes.user_id = u.id
+                    AND cm_mutes.chat_id = $1
+              )
         `, [chatId, sender.id], 'sendPushToOfflineMembers:members');
 
         if (result.rows.length === 0) return;

@@ -5,6 +5,7 @@
 // 🎯 FIX (web upload): MultipartFile.fromBytes вместо fromPath
 // 🎯 ПРОФИЛЬ: updateProfile() + _patch()
 // 🎯 FCM: sendFcmToken() + deleteFcmToken()
+// 🎯 MUTE: muteChat() + unmuteChat()
 // =====================================================
 
 import 'dart:async';
@@ -309,9 +310,6 @@ class ApiService {
     // =====================================================
     // 👤 ОБНОВЛЕНИЕ ПРОФИЛЯ
     // =====================================================
-    // Обновляет display_name и/или avatar текущего пользователя.
-    // Возвращает обновлённого User.
-    // =====================================================
     static Future<ApiResponse<User>> updateProfile({
         String? displayName,
         String? avatar,
@@ -338,9 +336,6 @@ class ApiService {
     // =====================================================
     // 🔔 ОТПРАВКА FCM-ТОКЕНА НА СЕРВЕР
     // =====================================================
-    // Сохраняет FCM-токен устройства в БД (привязан к userId).
-    // Нужно для отправки push при новых сообщениях.
-    // =====================================================
     static Future<ApiResponse<void>> sendFcmToken(String token) async {
         if (token.isEmpty) {
             return ApiResponse.error('Пустой FCM-токен', statusCode: 400);
@@ -360,9 +355,6 @@ class ApiService {
 
     // =====================================================
     // 🔕 УДАЛЕНИЕ FCM-ТОКЕНА НА СЕРВЕРЕ
-    // =====================================================
-    // Обнуляет FCM-токен при выходе из аккаунта,
-    // чтобы push не приходил на устройство вышедшего.
     // =====================================================
     static Future<ApiResponse<void>> deleteFcmToken() async {
         final response = await _delete('/users/me/fcm-token');
@@ -614,6 +606,36 @@ class ApiService {
         if (response.isSuccess) {
             return ApiResponse.success(null);
         }
+        return ApiResponse.error(response.error!, statusCode: response.statusCode);
+    }
+
+    // =====================================================
+    // 🔕 MUTE УВЕДОМЛЕНИЙ ПО ЧАТУ
+    // =====================================================
+    // Заглушает уведомления от чата (push + локальные).
+    // =====================================================
+    static Future<ApiResponse<void>> muteChat(int chatId) async {
+        final response = await _post('/chats/$chatId/mute');
+
+        if (response.isSuccess) {
+            return ApiResponse.success(null);
+        }
+
+        return ApiResponse.error(response.error!, statusCode: response.statusCode);
+    }
+
+    // =====================================================
+    // 🔔 UNMUTE УВЕДОМЛЕНИЙ ПО ЧАТУ
+    // =====================================================
+    // Включает уведомления от чата обратно.
+    // =====================================================
+    static Future<ApiResponse<void>> unmuteChat(int chatId) async {
+        final response = await _delete('/chats/$chatId/mute');
+
+        if (response.isSuccess) {
+            return ApiResponse.success(null);
+        }
+
         return ApiResponse.error(response.error!, statusCode: response.statusCode);
     }
 

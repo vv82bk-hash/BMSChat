@@ -7,6 +7,7 @@
 // 🎯 emoji: эмодзи-аватар (для каналов и чатов)
 // 🎯 otherUserAvatar / otherUserId: данные собеседника
 //    в личных чатах (для показа аватара в списке)
+// 🎯 isMuted: уведомления по чату заглушены?
 //
 // 🔧 v2: _intToBool теперь парсит строки ('true', '1', 't')
 // 🎯 ЭТАП C.1: Telegram-формат даты и превью
@@ -66,6 +67,13 @@ class Chat {
     final int? otherUserId;
 
     // =====================================================
+    // 🎯 УВЕДОМЛЕНИЯ
+    // =====================================================
+
+    /// 🎯 Уведомления по чату заглушены?
+    final bool isMuted;
+
+    // =====================================================
     // 🏗️ КОНСТРУКТОР
     // =====================================================
 
@@ -92,6 +100,7 @@ class Chat {
         this.emoji,
         this.otherUserAvatar,
         this.otherUserId,
+        this.isMuted = false,
     });
 
     // =====================================================
@@ -126,6 +135,7 @@ class Chat {
             emoji: _parseEmoji(json['emoji']),
             otherUserAvatar: json['other_user_avatar'] as String?,
             otherUserId: json['other_user_id'] as int?,
+            isMuted: _intToBool(json['is_muted']),
         );
     }
 
@@ -156,6 +166,7 @@ class Chat {
             'emoji': emoji,
             'other_user_avatar': otherUserAvatar,
             'other_user_id': otherUserId,
+            'is_muted': isMuted ? 1 : 0,
         };
     }
 
@@ -186,6 +197,7 @@ class Chat {
         String? emoji,
         String? otherUserAvatar,
         int? otherUserId,
+        bool? isMuted,
     }) {
         return Chat(
             id: id ?? this.id,
@@ -210,6 +222,7 @@ class Chat {
             emoji: emoji ?? this.emoji,
             otherUserAvatar: otherUserAvatar ?? this.otherUserAvatar,
             otherUserId: otherUserId ?? this.otherUserId,
+            isMuted: isMuted ?? this.isMuted,
         );
     }
 
@@ -430,7 +443,7 @@ class Chat {
         return 'Chat(id: $id, type: $type, title: $title, '
             'members: $membersCount, unread: $unreadCount, '
             'isPrivate: $isPrivate, isMember: $isMember, emoji: $emoji, '
-            'otherUserId: $otherUserId)';
+            'otherUserId: $otherUserId, isMuted: $isMuted)';
     }
 
     @override
@@ -443,13 +456,14 @@ class Chat {
             other.isPrivate == isPrivate &&
             other.isMember == isMember &&
             other.emoji == emoji &&
-            other.otherUserAvatar == otherUserAvatar;
+            other.otherUserAvatar == otherUserAvatar &&
+            other.isMuted == isMuted;
     }
 
     @override
     int get hashCode => Object.hash(
         id, lastMessageId, unreadCount, isPrivate, isMember, emoji,
-        otherUserAvatar,
+        otherUserAvatar, isMuted,
     );
 }
 

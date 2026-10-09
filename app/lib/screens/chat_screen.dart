@@ -18,6 +18,7 @@
 // 🎯 ГОЛОСОВЫЕ: запись OGG/Opus, отправка, UI записи
 // 🎯 ПРОФИЛЬ: тап по имени отправителя → UserProfileScreen
 // 🎯 ГРУППЫ: настройки группы + выход из группы
+// 🎯 MUTE: пункт «Отключить/Включить уведомления»
 // =====================================================
 
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
@@ -881,6 +882,30 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     // ============================================
+    // 🔕 MUTE / UNMUTE УВЕДОМЛЕНИЙ
+    // ============================================
+    Future<void> _toggleMute(Chat chat) async {
+        final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+        final wasMuted = chat.isMuted;
+
+        final success = await chatProvider.toggleMute(chat.id);
+
+        if (!mounted) return;
+
+        if (success) {
+            _showInfo(
+                wasMuted
+                    ? '🔔 Уведомления включены'
+                    : '🔕 Уведомления отключены',
+            );
+        } else {
+            _showError(
+                chatProvider.chatsError ?? 'Не удалось изменить уведомления',
+            );
+        }
+    }
+
+    // ============================================
     // 🎯 ШАГ 15: ВСТУПИТЬ В КАНАЛ
     // ============================================
     Future<void> _joinChannel() async {
@@ -963,11 +988,16 @@ class _ChatScreenState extends State<ChatScreen> {
                                 onTap: () => Navigator.pop(context, 'search'),
                             ),
 
+                            // 🎯 Mute/Unmute уведомлений
                             _menuTile(
-                                icon: Icons.notifications_off_outlined,
-                                title: 'Отключить уведомления',
+                                icon: chat.isMuted
+                                    ? Icons.notifications_active_outlined
+                                    : Icons.notifications_off_outlined,
+                                title: chat.isMuted
+                                    ? 'Включить уведомления'
+                                    : 'Отключить уведомления',
                                 onTap: () =>
-                                    Navigator.pop(context, 'mute'),
+                                    Navigator.pop(context, 'toggle_mute'),
                             ),
 
                             _menuTile(
@@ -1036,8 +1066,8 @@ class _ChatScreenState extends State<ChatScreen> {
             case 'search':
                 _showInfo('Поиск — скоро');
                 break;
-            case 'mute':
-                _showInfo('Уведомления — скоро');
+            case 'toggle_mute':
+                await _toggleMute(chat);
                 break;
             case 'clear':
                 _showInfo('Очистка истории — скоро');

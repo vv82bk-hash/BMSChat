@@ -8,6 +8,7 @@
 //   • Получение FCM-токена (отправка на сервер — в AuthProvider)
 //   • Показ локального уведомления при foreground-push
 //   • Обработка тапа по уведомлению (переход в чат)
+//   • Mute: не показывать уведомления для замьюченных чатов
 // 🎯 Обновление токена: при onTokenRefresh — отправка на сервер
 // =====================================================
 
@@ -52,6 +53,10 @@ class NotificationService {
     // 🎯 Callback: что делать при тапе по уведомлению.
     // Устанавливается извне (например, из MainScreen).
     static void Function(String? chatId)? onNotificationTap;
+
+    // 🎯 Множество ID замьюченных чатов.
+    // Обновляется из ChatProvider при toggleMute и loadChats.
+    static final Set<int> _mutedChatIds = {};
 
     // =====================================================
     // 🚀 ИНИЦИАЛИЗАЦИЯ
@@ -212,10 +217,19 @@ class NotificationService {
         final notification = message.notification;
         if (notification == null) return;
 
+        // 🎯 Проверяем mute по chatId
+        final chatIdStr = message.data['chatId']?.toString();
+        final chatId = chatIdStr != null ? int.tryParse(chatIdStr) : null;
+
+        if (chatId != null && _mutedChatIds.contains(chatId)) {
+            debugPrint('🔕 Чат #$chatId замьючен — уведомление пропущено');
+            return;
+        }
+
         _showLocalNotification(
             title: notification.title ?? 'Новое сообщение',
             body: notification.body ?? '',
-            payload: message.data['chatId']?.toString(),
+            payload: chatIdStr,
         );
     }
 
@@ -283,5 +297,34 @@ class NotificationService {
         } catch (e) {
             debugPrint('❌ Ошибка удаления FCM-токена: $e');
         }
+    }
+
+    // =====================================================
+    // 🔕 MUTE — УПРАВЛЕНИЕ ЗАМЬЮЧЕННЫМИ ЧАТАМИ
+    // =====================================================
+
+    /// 🎯 Установить/снять mute для чата.
+    /// Вызывается из ChatProvider.toggleMute.
+    static void setChatMuted(int chatId, bool isMuted) {
+        if (isMuted) {
+            _mutedChatIds.add(chatId);
+            debugPrint('🔕 Чат #$chatId добавлен в muted');
+        } else {
+            _mutedChatIds.remove(chatId);
+            debugPrint('🔔 Чат #$chatId убран из muted');
+        }
+    }
+
+    /// 🎯 Массовое обновление mute-статусов.
+    /// Вызывается из ChatProvider.loadChats.
+    static void setMutedChats(Iterable<int> mutedIds) {
+        _mutedChatIds.clear();
+        _mutedChatIds.addAll(mutedIds);
+        debugPrint('🔕 Замьючено чатов: ${_mutedChatIds.length}');
+    }
+
+    /// 🎯 Замьючен ли чат?
+    static bool isChatMuted(int chatId) {
+        return _mutedChatIds.contains(chatId);
     }
 }

@@ -14,6 +14,7 @@
 //    загрузки — повторное открытие чата мгновенно.
 // 🎯 ГРУППЫ: createGroup + updateGroup + leaveGroup + правки
 //    canWriteToActiveChat для group
+// 🎯 MUTE: toggleMute + isMuted + синхронизация с NotificationService
 // =====================================================
 
 import 'dart:async';
@@ -26,6 +27,7 @@ import '../config/constants.dart';
 import '../models/chat.dart';
 import '../models/message.dart';
 import '../services/api_service.dart';
+import '../services/notification_service.dart';
 import '../services/socket_service.dart';
 import '../utils/app_logger.dart';
 import 'auth_provider.dart';
@@ -361,6 +363,13 @@ class ChatProvider extends ChangeNotifier {
                     'закреплено: ${_pinnedChatIds.length})'
                 );
                 _chatsError = null;
+
+                // 🎯 Синхронизируем mute-статусы с NotificationService
+                final mutedIds = _chats
+                    .where((c) => c.isMuted)
+                    .map((c) => c.id)
+                    .toList();
+                NotificationService.setMutedChats(mutedIds);
             } else {
                 _chatsError = response.error ?? 'Ошибка загрузки';
                 AppLogger.warn('Ошибка чатов: $_chatsError');
@@ -701,6 +710,83 @@ class ChatProvider extends ChangeNotifier {
             notifyListeners();
             return false;
         }
+    }
+
+    // =====================================================
+    // 🔕 MUTE / UNMUTE УВЕДОМЛЕНИЙ ПО ЧАТУ
+    // =====================================================
+    Future<bool> toggleMute(int chatId) async {
+        final idx = _chats.indexWhere((c) => c.id == chatId);
+        if (idx < 0) {
+            AppLogger.warn('toggleMute: чат #$chatId не найден');
+            return false;
+        }
+
+        final chat = _chats[idx];
+        final newMuted = !chat.isMuted;
+
+        AppLogger.info(
+            newMuted
+                ? '🔕 Mute чата #$chatId'
+                : '🔔 Unmute чата #$chatId',
+        );
+
+        // 🎯 Оптимистично обновляем локально
+        _chats[idx] = chat.copyWith(isMuted: newMuted);
+        if (_activeChat?.id == chatId) {
+            _activeChat = _activeChat!.copyWith(isMuted: newMuted);
+        }
+        notifyListeners();
+
+        try {
+            final response = newMuted
+                ? await ApiService.muteChat(chatId)
+                : await ApiService.unmuteChat(chatId);
+
+            if (!response.isSuccess) {
+                // 🎯 Откат при ошибке
+                AppLogger.warn('Ошибка toggleMute: ${response.error}');
+                _chats[idx] = chat;
+                if (_activeChat?.id == chatId) {
+                    _activeChat = _activeChat!.copyWith(isMuted: !newMuted);
+                }
+                NotificationService.setChatMuted(chatId, !newMuted);
+                _chatsError = response.error ?? 'Ошибка уведомлений';
+                notifyListeners();
+                return false;
+            }
+
+            // 🎯 Синхронизируем mute с NotificationService
+            NotificationService.setChatMuted(chatId, newMuted);
+
+            _chatsError = null;
+            notifyListeners();
+
+            AppLogger.success(
+                newMuted
+                    ? 'Уведомления отключены'
+                    : 'Уведомления включены',
+            );
+            return true;
+        } catch (e) {
+            AppLogger.error('Ошибка toggleMute', e);
+            // 🎯 Откат
+            _chats[idx] = chat;
+            if (_activeChat?.id == chatId) {
+                _activeChat = _activeChat!.copyWith(isMuted: !newMuted);
+            }
+            NotificationService.setChatMuted(chatId, !newMuted);
+            _chatsError = 'Ошибка сети';
+            notifyListeners();
+            return false;
+        }
+    }
+
+    /// 🎯 Проверка: замьючен ли чат?
+    bool isMuted(int chatId) {
+        final idx = _chats.indexWhere((c) => c.id == chatId);
+        if (idx < 0) return false;
+        return _chats[idx].isMuted;
     }
 
     Future<bool> updateChannel(
