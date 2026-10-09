@@ -15,6 +15,8 @@
 // 🎯 ГРУППЫ: createGroup + updateGroup + leaveGroup + правки
 //    canWriteToActiveChat для group
 // 🎯 MUTE: toggleMute + isMuted + синхронизация с NotificationService
+// 🎯 ПОИСК: openSearch / closeSearch / searchMessages /
+//    loadMoreSearchResults — поиск по сообщениям в активном чате
 // =====================================================
 
 import 'dart:async';
@@ -64,6 +66,13 @@ class ChatProvider extends ChangeNotifier {
     bool _hasMoreOld = true;
     bool _isLoadingMore = false;
 
+    // 🎯 ПОИСК: состояние поиска по сообщениям в активном чате
+    bool _isSearching = false;
+    String _searchQuery = '';
+    List<Message> _searchResults = [];
+    bool _searchHasMore = false;
+    bool _isSearchLoading = false;
+
     // 🎯 ОПТИМИЗАЦИЯ: кэш сообщений по chatId
     final Map<int, _CachedMessages> _messagesCache = {};
     static const Duration _cacheTtl = Duration(minutes: 2);
@@ -108,6 +117,13 @@ class ChatProvider extends ChangeNotifier {
 
     bool get hasMoreOld => _hasMoreOld;
     bool get isLoadingMore => _isLoadingMore;
+
+    // 🎯 ПОИСК: геттеры состояния поиска
+    bool get isSearching => _isSearching;
+    String get searchQuery => _searchQuery;
+    List<Message> get searchResults => _searchResults;
+    bool get searchHasMore => _searchHasMore;
+    bool get isSearchLoading => _isSearchLoading;
 
     String? get typingUser {
         if (_typingUsers.isEmpty) return null;
@@ -436,6 +452,9 @@ class ChatProvider extends ChangeNotifier {
             _hasMoreOld = true;
             _isLoadingMore = false;
 
+            // 🎯 Сбрасываем состояние поиска при открытии нового чата
+            _resetSearchState();
+
             final cached = getCachedMessages(chatId);
             if (cached != null && cached.isNotEmpty) {
                 _messages = List.from(cached);
@@ -472,6 +491,149 @@ class ChatProvider extends ChangeNotifier {
         _myLastReadMessageId = 0;
         _hasMoreOld = true;
         _isLoadingMore = false;
+
+        // 🎯 Сбрасываем состояние поиска при закрытии чата
+        _resetSearchState();
+
+        notifyListeners();
+    }
+
+    // =====================================================
+    // 🔎 ПОИСК ПО СООБЩЕНИЯМ
+    // =====================================================
+    // Поиск работает только в активном чате.
+    // Мин. длина запроса — 2 символа (согласовано с backend).
+    // Пагинация — через `before` (id-курсор).
+    // =====================================================
+
+    /// Внутренний сброс состояния поиска. Без notifyListeners.
+    void _resetSearchState() {
+        _isSearching = false;
+        _searchQuery = '';
+        _searchResults = [];
+        _searchHasMore = false;
+        _isSearchLoading = false;
+    }
+
+    /// Включить режим поиска.
+    void openSearch() {
+        if (_activeChat == null) return;
+
+        _isSearching = true;
+        _searchQuery = '';
+        _searchResults = [];
+        _searchHasMore = false;
+        _isSearchLoading = false;
+
+        AppLogger.info('🔎 Режим поиска включён в чате #${_activeChat!.id}');
+        notifyListeners();
+    }
+
+    /// Выключить режим поиска и очистить результаты.
+    void closeSearch() {
+        if (!_isSearching) return;
+
+        _resetSearchState();
+
+        AppLogger.info('🔎 Режим поиска выключен');
+        notifyListeners();
+    }
+
+    /// Поиск по сообщениям в активном чате.
+    /// Минимум 2 символа. Если меньше — результаты очищаются.
+    Future<void> searchMessages(String query) async {
+        if (_activeChat == null) return;
+
+        final trimmed = query.trim();
+        _searchQuery = trimmed;
+
+        if (trimmed.length < 2) {
+            _searchResults = [];
+            _searchHasMore = false;
+            _isSearchLoading = false;
+            notifyListeners();
+            return;
+        }
+
+        _isSearchLoading = true;
+        notifyListeners();
+
+        try {
+            final response = await ApiService.searchMessages(
+                _activeChat!.id,
+                trimmed,
+            );
+
+            if (response.isSuccess && response.data != null) {
+                final result = response.data!;
+                _searchResults = result.messages;
+                _searchHasMore = result.hasMore;
+
+                AppLogger.success(
+                    '🔎 Поиск "$trimmed": найдено ${result.messages.length} '
+                    '(hasMore: $_searchHasMore)'
+                );
+            } else {
+                _searchResults = [];
+                _searchHasMore = false;
+                AppLogger.warn('Ошибка поиска: ${response.error}');
+            }
+        } catch (e) {
+            AppLogger.error('Ошибка поиска', e);
+            _searchResults = [];
+            _searchHasMore = false;
+        }
+
+        _isSearchLoading = false;
+        notifyListeners();
+    }
+
+    /// Подгрузка следующей страницы результатов поиска.
+    Future<void> loadMoreSearchResults() async {
+        if (!_isSearching) return;
+        if (!_searchHasMore) return;
+        if (_isSearchLoading) return;
+        if (_searchResults.isEmpty) return;
+        if (_activeChat == null) return;
+        if (_searchQuery.length < 2) return;
+
+        _isSearchLoading = true;
+        notifyListeners();
+
+        try {
+            final before = _searchResults.last.id;
+
+            final response = await ApiService.searchMessages(
+                _activeChat!.id,
+                _searchQuery,
+                before: before,
+            );
+
+            if (response.isSuccess && response.data != null) {
+                final result = response.data!;
+
+                final existingIds = _searchResults.map((m) => m.id).toSet();
+                final fresh = result.messages
+                    .where((m) => !existingIds.contains(m.id))
+                    .toList();
+
+                _searchResults = [..._searchResults, ...fresh];
+                _searchHasMore = result.hasMore;
+
+                AppLogger.success(
+                    '🔎 Подгружено ${fresh.length} результатов '
+                    '(hasMore: $_searchHasMore)'
+                );
+            } else {
+                AppLogger.warn('Ошибка пагинации поиска: ${response.error}');
+                _searchHasMore = false;
+            }
+        } catch (e) {
+            AppLogger.error('Ошибка пагинации поиска', e);
+            _searchHasMore = false;
+        }
+
+        _isSearchLoading = false;
         notifyListeners();
     }
 
@@ -1753,6 +1915,9 @@ class ChatProvider extends ChangeNotifier {
         _hasMoreOld = true;
         _isLoadingMore = false;
         _messagesCache.clear();
+
+        // 🎯 Сброс состояния поиска
+        _resetSearchState();
 
         notifyListeners();
     }

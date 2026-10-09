@@ -20,7 +20,10 @@
 // 🎯 ГРУППЫ: настройки группы + выход из группы
 // 🎯 MUTE: пункт «Отключить/Включить уведомления»
 // 🎯 ИНФО: переход на ChatInfoScreen
+// 🎯 ПОИСК: AppBar-поле + результаты + debounce + пагинация
 // =====================================================
+
+import 'dart:async';
 
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -102,6 +105,9 @@ class _ChatScreenState extends State<ChatScreen> {
     int _recordingSeconds = 0;
     bool _isSendingVoice = false;
 
+    // 🎯 ПОИСК: debounce для TextField
+    Timer? _searchDebounce;
+
     @override
     void initState() {
         super.initState();
@@ -126,6 +132,10 @@ class _ChatScreenState extends State<ChatScreen> {
         final chat = Provider.of<ChatProvider>(context, listen: false);
         chat.removeListener(_onChatChanged);
         _scrollController.removeListener(_onScroll);
+
+        // 🎯 ПОИСК: отменяем debounce
+        _searchDebounce?.cancel();
+
         _messageController.dispose();
         _scrollController.dispose();
         _inputFocusNode.dispose();
@@ -148,6 +158,88 @@ class _ChatScreenState extends State<ChatScreen> {
             _showEmojiPicker = false;
         });
         FocusScope.of(context).unfocus();
+    }
+
+    // ============================================
+    // 🔎 ПОИСК ПО СООБЩЕНИЯМ
+    // ============================================
+
+    /// Открыть режим поиска.
+    void _openSearch() {
+        final chat = Provider.of<ChatProvider>(context, listen: false);
+        chat.openSearch();
+        FocusScope.of(context).unfocus();
+        setState(() {
+            _showEmojiPicker = false;
+            _isInputFocused = false;
+        });
+    }
+
+    /// Закрыть режим поиска.
+    void _closeSearch() {
+        _searchDebounce?.cancel();
+        _searchDebounce = null;
+        final chat = Provider.of<ChatProvider>(context, listen: false);
+        chat.closeSearch();
+    }
+
+    /// Обработка ввода в поиске с debounce 350 ms.
+    void _onSearchChanged(String value) {
+        _searchDebounce?.cancel();
+        _searchDebounce = Timer(
+            const Duration(milliseconds: 350),
+            () {
+                if (!mounted) return;
+                final chat = Provider.of<ChatProvider>(context, listen: false);
+                chat.searchMessages(value);
+            },
+        );
+    }
+
+    /// Тап по результату — закрываем поиск и скроллим к сообщению.
+    void _onSearchResultTap(Message message) {
+        _closeSearch();
+        // Небольшая задержка, чтобы режим поиска успел выключиться
+        // и список сообщений снова отрисовался.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+            _scrollToMessage(message.id);
+        });
+    }
+
+    /// Подсветка совпадения в тексте (простая, без regex).
+    List<TextSpan> _highlightMatch(String text, String query) {
+        if (query.isEmpty) {
+            return [TextSpan(text: text)];
+        }
+
+        final lowerText = text.toLowerCase();
+        final lowerQuery = query.toLowerCase();
+        final spans = <TextSpan>[];
+        int start = 0;
+
+        while (true) {
+            final idx = lowerText.indexOf(lowerQuery, start);
+            if (idx < 0) {
+                spans.add(TextSpan(text: text.substring(start)));
+                break;
+            }
+
+            if (idx > start) {
+                spans.add(TextSpan(text: text.substring(start, idx)));
+            }
+
+            spans.add(TextSpan(
+                text: text.substring(idx, idx + query.length),
+                style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: RastaTheme.rastaYellow,
+                ),
+            ));
+
+            start = idx + query.length;
+        }
+
+        return spans;
     }
 
     // ============================================
@@ -1076,7 +1168,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 _openChatInfo(chat);
                 break;
             case 'search':
-                _showInfo('Поиск — скоро');
+                _openSearch();
                 break;
             case 'toggle_mute':
                 await _toggleMute(chat);
@@ -1151,108 +1243,23 @@ class _ChatScreenState extends State<ChatScreen> {
             appBar: AppBar(
                 elevation: 4,
                 shadowColor: Colors.black.withValues(alpha: 0.5),
-                title: Row(
-                    children: [
-                        if (activeChat != null &&
-                            activeChat.useLogoImage) ...[
-                            Container(
-                                width: 38,
-                                height: 38,
-                                decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    boxShadow: [
-                                        BoxShadow(
-                                            color: RastaTheme.rastaYellow
-                                                .withValues(alpha: 0.4),
-                                            blurRadius: 10,
-                                            spreadRadius: 1,
-                                        ),
-                                    ],
-                                ),
-                                child: ClipOval(
-                                    child: Image.asset(
-                                        'assets/images/logo.png',
-                                        fit: BoxFit.cover,
-                                        errorBuilder:
-                                            (context, error, stackTrace) {
-                                            return Container(
-                                                color: RastaTheme
-                                                    .surfaceSecondary,
-                                                child: const Center(
-                                                    child: Text('🎯',
-                                                        style: TextStyle(
-                                                            fontSize: 20)),
-                                                ),
-                                            );
-                                        },
-                                    ),
-                                ),
-                            ),
-                            const SizedBox(width: 10),
-                        ],
-
-                        if (activeChat != null &&
-                            !activeChat.useLogoImage) ...[
-                            Container(
-                                width: 38,
-                                height: 38,
-                                decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    gradient: activeChat.isChannel
-                                        ? const LinearGradient(
-                                            colors: [
-                                                Color(0xFF9C27B0),
-                                                RastaTheme.rastaRed,
-                                            ],
-                                        )
-                                        : const LinearGradient(
-                                            colors: [
-                                                RastaTheme.rastaRed,
-                                                RastaTheme.rastaYellow,
-                                            ],
-                                        ),
-                                    boxShadow: [
-                                        BoxShadow(
-                                            color: RastaTheme.rastaYellow
-                                                .withValues(alpha: 0.35),
-                                            blurRadius: 8,
-                                            spreadRadius: 1,
-                                        ),
-                                    ],
-                                ),
-                                child: Center(
-                                    child: Text(
-                                        activeChat.displayEmoji,
-                                        style: const TextStyle(fontSize: 20),
-                                    ),
-                                ),
-                            ),
-                            const SizedBox(width: 10),
-                        ],
-
-                        Expanded(
-                            child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                    Text(
-                                        activeChat?.title ?? 'Чат',
-                                        style: const TextStyle(
-                                            fontSize: 18,
-                                            fontWeight: FontWeight.w700,
-                                        ),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                    ),
-                                    if (activeChat != null)
-                                        _buildSubtitle(chat),
-                                ],
-                            ),
-                        ),
-                    ],
-                ),
+                title: chat.isSearching
+                    ? _buildSearchField(chat)
+                    : _buildAppBarTitle(activeChat, chat),
                 actions: [
                     if (activeChat != null)
+                        chat.isSearching
+                            ? IconButton(
+                                icon: const Icon(Icons.close, size: 26),
+                                tooltip: 'Закрыть поиск',
+                                onPressed: _closeSearch,
+                            )
+                            : IconButton(
+                                icon: const Icon(Icons.search, size: 26),
+                                tooltip: 'Поиск',
+                                onPressed: _openSearch,
+                            ),
+                    if (activeChat != null && !chat.isSearching)
                         IconButton(
                             icon: const Icon(Icons.more_vert, size: 26),
                             tooltip: 'Меню',
@@ -1263,201 +1270,488 @@ class _ChatScreenState extends State<ChatScreen> {
             body: Column(
                 children: [
                     Expanded(
-                        child: GestureDetector(
-                            behavior: HitTestBehavior.translucent,
-                            onTap: _hideInputPanel,
-                            child: Stack(
-                                children: [
-                                    chat.isLoadingMessages
-                                        ? const Center(
-                                            child: CircularProgressIndicator(
-                                                valueColor:
-                                                    AlwaysStoppedAnimation<
-                                                        Color>(
-                                                    RastaTheme.rastaYellow,
+                        child: chat.isSearching
+                            ? _buildSearchResults(chat)
+                            : GestureDetector(
+                                behavior: HitTestBehavior.translucent,
+                                onTap: _hideInputPanel,
+                                child: Stack(
+                                    children: [
+                                        chat.isLoadingMessages
+                                            ? const Center(
+                                                child:
+                                                    CircularProgressIndicator(
+                                                    valueColor:
+                                                        AlwaysStoppedAnimation<
+                                                            Color>(
+                                                        RastaTheme
+                                                            .rastaYellow,
+                                                    ),
                                                 ),
-                                            ),
-                                        )
-                                        : chat.messages.isEmpty
-                                            ? _buildEmptyState(activeChat
-                                                    ?.useLogoImage ??
-                                                false)
-                                            : ListView.builder(
-                                                controller: _scrollController,
-                                                reverse: true,
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                    vertical: 8,
-                                                    horizontal: 0,
-                                                ),
-                                                itemCount:
-                                                    chat.messages.length,
-                                                itemBuilder: (context, index) {
-                                                    final msgIndex = chat
-                                                            .messages.length -
-                                                        1 -
-                                                        index;
-                                                    final message = chat
-                                                        .messages[msgIndex];
-                                                    final isOwn = message
-                                                            .senderId ==
-                                                        currentUserId;
+                                            )
+                                            : chat.messages.isEmpty
+                                                ? _buildEmptyState(activeChat
+                                                        ?.useLogoImage ??
+                                                    false)
+                                                : ListView.builder(
+                                                    controller:
+                                                        _scrollController,
+                                                    reverse: true,
+                                                    padding:
+                                                        const EdgeInsets
+                                                            .symmetric(
+                                                        vertical: 8,
+                                                        horizontal: 0,
+                                                    ),
+                                                    itemCount:
+                                                        chat.messages.length,
+                                                    itemBuilder:
+                                                        (context, index) {
+                                                        final msgIndex = chat
+                                                                .messages
+                                                                .length -
+                                                            1 -
+                                                            index;
+                                                        final message = chat
+                                                            .messages[msgIndex];
+                                                        final isOwn = message
+                                                                .senderId ==
+                                                            currentUserId;
 
-                                                    final replyTo = message
-                                                                .replyToId !=
-                                                            null
-                                                        ? _messagesById[message
-                                                            .replyToId]
-                                                        : null;
-
-                                                    final prevMessage =
-                                                        msgIndex > 0
-                                                            ? chat.messages[
-                                                                msgIndex - 1]
-                                                            : null;
-                                                    final showDate =
-                                                        prevMessage == null ||
-                                                            !_isSameDay(
+                                                        final replyTo = message
+                                                                    .replyToId !=
+                                                                null
+                                                            ? _messagesById[
                                                                 message
-                                                                    .createdAt,
-                                                                prevMessage
-                                                                    .createdAt,
-                                                            );
+                                                                    .replyToId]
+                                                            : null;
 
-                                                    return Column(
-                                                        key: _getMessageKey(
-                                                            message.id),
-                                                        crossAxisAlignment:
-                                                            CrossAxisAlignment
-                                                                .stretch,
-                                                        children: [
-                                                            if (showDate)
-                                                                _buildDateDivider(
+                                                        final prevMessage =
+                                                            msgIndex > 0
+                                                                ? chat.messages[
+                                                                    msgIndex -
+                                                                        1]
+                                                                : null;
+                                                        final showDate =
+                                                            prevMessage ==
+                                                                    null ||
+                                                                !_isSameDay(
                                                                     message
                                                                         .createdAt,
-                                                                ),
-                                                            AnimatedMessageWrapper(
-                                                                messageId:
-                                                                    message
-                                                                        .id,
-                                                                child: MessageBubble(
-                                                                    message:
-                                                                        message,
-                                                                    isOwn:
-                                                                        isOwn,
-                                                                    replyTo:
-                                                                        replyTo,
-                                                                    onLongPress: () =>
-                                                                        _showReactionPicker(
-                                                                            context,
-                                                                            message,
-                                                                            isOwn,
-                                                                        ),
-                                                                    onReply: () {
-                                                                        chat.setReplyTo(
-                                                                            message);
-                                                                    },
-                                                                    onReplyTap: replyTo !=
-                                                                            null
-                                                                        ? () => _scrollToMessage(
-                                                                            replyTo.id)
-                                                                        : null,
-                                                                    onSenderTap: !isOwn
-                                                                        ? () => _openUserProfile(
-                                                                            message
-                                                                                .senderId)
-                                                                        : null,
-                                                                ),
-                                                            ),
-                                                        ],
-                                                    );
-                                                },
-                                            ),
+                                                                    prevMessage
+                                                                        .createdAt,
+                                                                );
 
-                                    if (chat.isLoadingMore)
-                                        const Positioned(
-                                            top: 0,
-                                            left: 0,
-                                            right: 0,
-                                            child: Padding(
-                                                padding: EdgeInsets.symmetric(
-                                                    vertical: 8,
+                                                        return Column(
+                                                            key: _getMessageKey(
+                                                                message.id),
+                                                            crossAxisAlignment:
+                                                                CrossAxisAlignment
+                                                                    .stretch,
+                                                            children: [
+                                                                if (showDate)
+                                                                    _buildDateDivider(
+                                                                        message
+                                                                            .createdAt,
+                                                                    ),
+                                                                AnimatedMessageWrapper(
+                                                                    messageId:
+                                                                        message
+                                                                            .id,
+                                                                    child: MessageBubble(
+                                                                        message:
+                                                                            message,
+                                                                        isOwn:
+                                                                            isOwn,
+                                                                        replyTo:
+                                                                            replyTo,
+                                                                        onLongPress: () =>
+                                                                            _showReactionPicker(
+                                                                                context,
+                                                                                message,
+                                                                                isOwn,
+                                                                            ),
+                                                                        onReply:
+                                                                            () {
+                                                                            chat.setReplyTo(
+                                                                                message);
+                                                                        },
+                                                                        onReplyTap: replyTo !=
+                                                                                null
+                                                                            ? () => _scrollToMessage(
+                                                                                replyTo.id)
+                                                                            : null,
+                                                                        onSenderTap: !isOwn
+                                                                            ? () => _openUserProfile(
+                                                                                message.senderId)
+                                                                            : null,
+                                                                    ),
+                                                                ),
+                                                            ],
+                                                        );
+                                                    },
                                                 ),
-                                                child: Center(
-                                                    child: SizedBox(
-                                                        width: 24,
-                                                        height: 24,
-                                                        child:
-                                                            CircularProgressIndicator(
-                                                            strokeWidth: 2,
-                                                            valueColor:
-                                                                AlwaysStoppedAnimation<
-                                                                    Color>(
+
+                                        if (chat.isLoadingMore)
+                                            const Positioned(
+                                                top: 0,
+                                                left: 0,
+                                                right: 0,
+                                                child: Padding(
+                                                    padding:
+                                                        EdgeInsets.symmetric(
+                                                        vertical: 8,
+                                                    ),
+                                                    child: Center(
+                                                        child: SizedBox(
+                                                            width: 24,
+                                                            height: 24,
+                                                            child:
+                                                                CircularProgressIndicator(
+                                                                strokeWidth: 2,
+                                                                valueColor:
+                                                                    AlwaysStoppedAnimation<
+                                                                        Color>(
                                                                     RastaTheme
                                                                         .rastaYellow,
                                                                 ),
+                                                            ),
                                                         ),
                                                     ),
                                                 ),
                                             ),
-                                        ),
 
-                                    Positioned(
-                                        right: 16,
-                                        bottom: 16,
-                                        child: AnimatedScale(
-                                            scale:
-                                                _showScrollButton ? 1.0 : 0.0,
-                                            duration: const Duration(
-                                                milliseconds: 200),
-                                            curve: Curves.easeOutBack,
-                                            child: AnimatedOpacity(
-                                                opacity: _showScrollButton
+                                        Positioned(
+                                            right: 16,
+                                            bottom: 16,
+                                            child: AnimatedScale(
+                                                scale: _showScrollButton
                                                     ? 1.0
                                                     : 0.0,
                                                 duration: const Duration(
                                                     milliseconds: 200),
-                                                child:
-                                                    _buildScrollToBottomButton(),
+                                                curve: Curves.easeOutBack,
+                                                child: AnimatedOpacity(
+                                                    opacity: _showScrollButton
+                                                        ? 1.0
+                                                        : 0.0,
+                                                    duration: const Duration(
+                                                        milliseconds: 200),
+                                                    child:
+                                                        _buildScrollToBottomButton(),
+                                                ),
                                             ),
                                         ),
-                                    ),
-                                ],
-                            ),
-                        ),
-                    ),
-
-                    if (isChannelNotMember)
-                        _buildJoinChannelBlock(activeChat)
-                    else if (canWrite) ...[
-                        if (chat.replyToMessage != null)
-                            _buildReplyPreview(chat),
-
-                        if (_isRecording)
-                            _buildRecordingPanel()
-                        else ...[
-                            AnimatedContainer(
-                                duration: const Duration(milliseconds: 220),
-                                curve: Curves.easeOutCubic,
-                                height: _isInputFocused ? null : 0,
-                                child: ClipRect(
-                                    child: Align(
-                                        alignment: Alignment.bottomCenter,
-                                        heightFactor:
-                                            _isInputFocused ? 1.0 : 0.0,
-                                        child: _buildQuickActionsBar(),
-                                    ),
+                                    ],
                                 ),
                             ),
+                    ),
 
-                            _buildInputField(),
-                            if (_showEmojiPicker) _buildEmojiPicker(),
-                        ],
-                    ] else
-                        _buildBlockedField(permissionError),
+                    // 🎯 ПОИСК: нижняя панель ввода скрывается в режиме поиска
+                    if (!chat.isSearching) ...[
+                        if (isChannelNotMember)
+                            _buildJoinChannelBlock(activeChat)
+                        else if (canWrite) ...[
+                            if (chat.replyToMessage != null)
+                                _buildReplyPreview(chat),
+
+                            if (_isRecording)
+                                _buildRecordingPanel()
+                            else ...[
+                                AnimatedContainer(
+                                    duration: const Duration(
+                                        milliseconds: 220),
+                                    curve: Curves.easeOutCubic,
+                                    height: _isInputFocused ? null : 0,
+                                    child: ClipRect(
+                                        child: Align(
+                                            alignment: Alignment.bottomCenter,
+                                            heightFactor:
+                                                _isInputFocused ? 1.0 : 0.0,
+                                            child: _buildQuickActionsBar(),
+                                        ),
+                                    ),
+                                ),
+
+                                _buildInputField(),
+                                if (_showEmojiPicker) _buildEmojiPicker(),
+                            ],
+                        ] else
+                            _buildBlockedField(permissionError),
+                    ],
 
                     SizedBox(height: navBarHeight),
                 ],
+            ),
+        );
+    }
+
+    // =====================================================
+    // 🔎 ПОИСК: поле в AppBar
+    // =====================================================
+    Widget _buildSearchField(ChatProvider chat) {
+        return TextField(
+            autofocus: true,
+            style: const TextStyle(
+                color: Colors.white,
+                fontSize: 17,
+            ),
+            decoration: const InputDecoration(
+                hintText: 'Поиск по сообщениям...',
+                hintStyle: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 16,
+                ),
+                border: InputBorder.none,
+                isDense: true,
+            ),
+            onChanged: _onSearchChanged,
+        );
+    }
+
+    // =====================================================
+    // 🔎 ПОИСК: обычный заголовок AppBar (вынесен из build)
+    // =====================================================
+    Widget _buildAppBarTitle(Chat? activeChat, ChatProvider chat) {
+        return Row(
+            children: [
+                if (activeChat != null && activeChat.useLogoImage) ...[
+                    Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                                BoxShadow(
+                                    color: RastaTheme.rastaYellow
+                                        .withValues(alpha: 0.4),
+                                    blurRadius: 10,
+                                    spreadRadius: 1,
+                                ),
+                            ],
+                        ),
+                        child: ClipOval(
+                            child: Image.asset(
+                                'assets/images/logo.png',
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) {
+                                    return Container(
+                                        color: RastaTheme.surfaceSecondary,
+                                        child: const Center(
+                                            child: Text('🎯',
+                                                style: TextStyle(
+                                                    fontSize: 20)),
+                                        ),
+                                    );
+                                },
+                            ),
+                        ),
+                    ),
+                    const SizedBox(width: 10),
+                ],
+
+                if (activeChat != null && !activeChat.useLogoImage) ...[
+                    Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: activeChat.isChannel
+                                ? const LinearGradient(
+                                    colors: [
+                                        Color(0xFF9C27B0),
+                                        RastaTheme.rastaRed,
+                                    ],
+                                )
+                                : const LinearGradient(
+                                    colors: [
+                                        RastaTheme.rastaRed,
+                                        RastaTheme.rastaYellow,
+                                    ],
+                                ),
+                            boxShadow: [
+                                BoxShadow(
+                                    color: RastaTheme.rastaYellow
+                                        .withValues(alpha: 0.35),
+                                    blurRadius: 8,
+                                    spreadRadius: 1,
+                                ),
+                            ],
+                        ),
+                        child: Center(
+                            child: Text(
+                                activeChat.displayEmoji,
+                                style: const TextStyle(fontSize: 20),
+                            ),
+                        ),
+                    ),
+                    const SizedBox(width: 10),
+                ],
+
+                Expanded(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                            Text(
+                                activeChat?.title ?? 'Чат',
+                                style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w700,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                            ),
+                            if (activeChat != null) _buildSubtitle(chat),
+                        ],
+                    ),
+                ),
+            ],
+        );
+    }
+
+    // =====================================================
+    // 🔎 ПОИСК: тело со списком результатов
+    // =====================================================
+    Widget _buildSearchResults(ChatProvider chat) {
+        final query = chat.searchQuery;
+
+        if (query.length < 2) {
+            return const Center(
+                child: Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Text(
+                        'Введите минимум 2 символа',
+                        style: TextStyle(
+                            color: RastaTheme.textMuted,
+                            fontSize: 15,
+                        ),
+                    ),
+                ),
+            );
+        }
+
+        if (chat.isSearchLoading && chat.searchResults.isEmpty) {
+            return const Center(
+                child: CircularProgressIndicator(
+                    valueColor:
+                        AlwaysStoppedAnimation<Color>(
+                        RastaTheme.rastaYellow,
+                    ),
+                ),
+            );
+        }
+
+        if (chat.searchResults.isEmpty) {
+            return const Center(
+                child: Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Text(
+                        'Ничего не найдено',
+                        style: TextStyle(
+                            color: RastaTheme.textMuted,
+                            fontSize: 15,
+                        ),
+                    ),
+                ),
+            );
+        }
+
+        return ListView.builder(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            itemCount: chat.searchResults.length +
+                (chat.searchHasMore ? 1 : 0),
+            itemBuilder: (context, index) {
+                if (index == chat.searchResults.length) {
+                    // Автоподгрузка следующей страницы
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                        chat.loadMoreSearchResults();
+                    });
+                    return const Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Center(
+                            child: SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    valueColor:
+                                        AlwaysStoppedAnimation<Color>(
+                                        RastaTheme.rastaYellow,
+                                    ),
+                                ),
+                            ),
+                        ),
+                    );
+                }
+
+                final msg = chat.searchResults[index];
+                return _buildSearchResultTile(msg, query);
+            },
+        );
+    }
+
+    Widget _buildSearchResultTile(Message message, String query) {
+        final text = message.text ?? '';
+        final senderName = message.senderName?.trim().isNotEmpty == true
+            ? message.senderName!
+            : (message.senderUsername?.trim().isNotEmpty == true
+                ? message.senderUsername!
+                : 'Без имени');
+
+        return InkWell(
+            onTap: () => _onSearchResultTap(message),
+            child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                        Row(
+                            children: [
+                                Expanded(
+                                    child: Text(
+                                        senderName,
+                                        style: const TextStyle(
+                                            color: RastaTheme.rastaYellow,
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w700,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                    ),
+                                ),
+                                Text(
+                                    DateFormat('dd.MM.yy HH:mm')
+                                        .format(message.createdAt),
+                                    style: const TextStyle(
+                                        color: RastaTheme.textMuted,
+                                        fontSize: 12,
+                                    ),
+                                ),
+                            ],
+                        ),
+                        const SizedBox(height: 4),
+                        RichText(
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            text: TextSpan(
+                                style: const TextStyle(
+                                    color: RastaTheme.textPrimary,
+                                    fontSize: 15,
+                                    height: 1.3,
+                                ),
+                                children: _highlightMatch(text, query),
+                            ),
+                        ),
+                        const SizedBox(height: 6),
+                        const Divider(
+                            color: RastaTheme.separator,
+                            height: 0.5,
+                            thickness: 0.5,
+                        ),
+                    ],
+                ),
             ),
         );
     }

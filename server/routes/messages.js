@@ -2,6 +2,7 @@
 // 📝 BMSChat — РОУТЫ СООБЩЕНИЙ (PostgreSQL)
 // =====================================================
 // 🎯 2026-09-21: queryWithRetry — защита от сбоев Supavisor
+// 🎯 2026-10-09: добавлен роут поиска по сообщениям
 // =====================================================
 
 const express = require('express');
@@ -51,6 +52,87 @@ async function queryWithRetry(sql, params, context = 'query', maxRetries = 3) {
 
     throw lastError;
 }
+
+// =====================================================
+// 🔎 GET /api/messages/:chatId/search?q=...&limit=30&before=<id>
+// =====================================================
+// ВАЖНО: этот роут должен быть ДО GET /:chatId,
+// иначе "search" будет воспринят как chatId.
+// =====================================================
+router.get('/:chatId/search', authMiddleware, async (req, res) => {
+    try {
+        const chatId = parseInt(req.params.chatId, 10);
+        const userId = req.user.id;
+
+        if (!chatId || Number.isNaN(chatId)) {
+            return res.status(400).json({ error: 'Некорректный chatId' });
+        }
+
+        const q = (req.query.q || '').trim();
+        const limit = Math.min(parseInt(req.query.limit, 10) || 30, 100);
+        const before = req.query.before ? parseInt(req.query.before, 10) : null;
+
+        if (q.length < 2) {
+            return res.status(400).json({ error: 'Минимум 2 символа для поиска' });
+        }
+
+        if (q.length > 200) {
+            return res.status(400).json({ error: 'Запрос слишком длинный' });
+        }
+
+        // Проверка доступа к чату
+        const access = await checkChatAccess(chatId, userId);
+        if (!access.allowed) {
+            return res.status(403).json({ error: access.reason });
+        }
+
+        // Экранируем спецсимволы ILIKE: %, _, \
+        const escaped = q.replace(/[\\%_]/g, (ch) => '\\' + ch);
+        const pattern = `%${escaped}%`;
+
+        const params = [chatId, pattern, limit];
+        let beforeClause = '';
+
+        if (before) {
+            params.push(before);
+            beforeClause = ` AND m.id < $${params.length}`;
+        }
+
+        const sql = `
+            SELECT
+                m.id, m.chat_id, m.sender_id, m.text, m.reply_to_id,
+                m.is_deleted, m.is_edited, m.created_at, m.updated_at,
+                u.username, u.display_name, u.avatar
+            FROM messages m
+            INNER JOIN users u ON u.id = m.sender_id
+            WHERE m.chat_id = $1
+              AND m.is_deleted = FALSE
+              AND m.text ILIKE $2 ESCAPE '\\'
+              ${beforeClause}
+            ORDER BY m.created_at DESC, m.id DESC
+            LIMIT $3
+        `;
+
+        const result = await queryWithRetry(
+            sql,
+            params,
+            'GET /messages:search'
+        );
+
+        res.json({
+            messages: result.rows,
+            hasMore: result.rows.length === limit,
+            query: q,
+        });
+    } catch (error) {
+        logger.error('Ошибка поиска сообщений', {
+            message: error.message,
+            chatId: req.params.chatId,
+            userId: req.user?.id,
+        });
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
 
 // =====================================================
 // 📜 GET /api/messages/:chatId

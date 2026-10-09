@@ -7,6 +7,7 @@
 // 🎤 Добавлена миграция duration для голосовых.
 // 🔔 Добавлена миграция fcm_token для push-уведомлений.
 // 🔕 Добавлена таблица chat_mutes (mute уведомлений).
+// 🔎 Добавлена миграция pg_trgm + GIN-индекс для поиска.
 //
 // ЗАПУСК:
 //   npm run migrate
@@ -127,6 +128,36 @@ async function runMigrations() {
         console.log('   ✅ Индекс idx_chat_mutes_user_id готов');
 
         // ─────────────────────────────────────────
+        // 6. 🔎 Расширение pg_trgm (для поиска по сообщениям)
+        // ─────────────────────────────────────────
+        console.log('');
+        console.log('📦 Миграция: расширение pg_trgm');
+
+        try {
+            await pool.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
+            console.log('   ✅ Расширение pg_trgm готово');
+        } catch (err) {
+            console.log('   ⚠️  Не удалось создать pg_trgm автоматически:');
+            console.log(`      ${err.message}`);
+            console.log('      Включите расширение вручную в панели БД,');
+            console.log('      затем перезапустите миграцию.');
+            throw err;
+        }
+
+        // ─────────────────────────────────────────
+        // 7. 🔎 GIN-индекс для поиска по тексту сообщений
+        // ─────────────────────────────────────────
+        console.log('');
+        console.log('📦 Миграция: idx_messages_text_trgm');
+
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_messages_text_trgm
+            ON messages USING gin (text gin_trgm_ops)
+            WHERE is_deleted = FALSE
+        `);
+        console.log('   ✅ Индекс idx_messages_text_trgm готов');
+
+        // ─────────────────────────────────────────
         // Проверка
         // ─────────────────────────────────────────
         const tables = await pool.query(`
@@ -181,6 +212,20 @@ async function runMigrations() {
             console.log('');
             console.log('🔕 Таблица chat_mutes:');
             console.log('   • Существует');
+        }
+
+        // Проверка индекса поиска
+        const hasSearchIndex = await pool.query(`
+            SELECT indexname
+            FROM pg_indexes
+            WHERE tablename = 'messages'
+              AND indexname = 'idx_messages_text_trgm'
+        `);
+
+        if (hasSearchIndex.rows.length > 0) {
+            console.log('');
+            console.log('🔎 Индекс поиска:');
+            console.log('   • idx_messages_text_trgm существует');
         }
 
         console.log('');

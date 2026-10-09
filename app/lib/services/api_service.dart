@@ -6,6 +6,7 @@
 // 🎯 ПРОФИЛЬ: updateProfile() + _patch()
 // 🎯 FCM: sendFcmToken() + deleteFcmToken()
 // 🎯 MUTE: muteChat() + unmuteChat()
+// 🎯 ПОИСК: searchMessages() — поиск по сообщениям в чате
 // =====================================================
 
 import 'dart:async';
@@ -69,6 +70,21 @@ class MessagesResponse {
         this.hasMore = false,
         this.maxReadId = 0,
         this.myLastReadId = 0,
+    });
+}
+
+// =====================================================
+// 📦 РЕЗУЛЬТАТ ПОИСКА СООБЩЕНИЙ
+// =====================================================
+class SearchResponse {
+    final List<Message> messages;
+    final bool hasMore;
+    final String query;
+
+    const SearchResponse({
+        required this.messages,
+        this.hasMore = false,
+        this.query = '',
     });
 }
 
@@ -667,6 +683,48 @@ class ApiService {
                 hasMore: data['hasMore'] as bool? ?? false,
                 maxReadId: data['maxReadId'] as int? ?? 0,
                 myLastReadId: data['myLastReadId'] as int? ?? 0,
+            ));
+        }
+        return ApiResponse.error(response.error!, statusCode: response.statusCode);
+    }
+
+    // =====================================================
+    // 🔎 ПОИСК СООБЩЕНИЙ В ЧАТЕ
+    // =====================================================
+    // GET /api/messages/:chatId/search?q=...&limit=30&before=<id>
+    // Возвращает постранично найденные сообщения (новые сверху).
+    // =====================================================
+    static Future<ApiResponse<SearchResponse>> searchMessages(
+        int chatId,
+        String query, {
+        int limit = 30,
+        int? before,
+    }) async {
+        final trimmed = query.trim();
+        if (trimmed.length < 2) {
+            return ApiResponse.error('Минимум 2 символа для поиска',
+                statusCode: 400);
+        }
+
+        String endpoint =
+            '${ApiEndpoints.messages(chatId)}/search?q=${Uri.encodeQueryComponent(trimmed)}&limit=$limit';
+        if (before != null) {
+            endpoint += '&before=$before';
+        }
+
+        final response = await _get(endpoint);
+
+        if (response.isSuccess) {
+            final data = response.data as Map<String, dynamic>;
+            final messagesJson = data['messages'] as List<dynamic>? ?? [];
+            final messages = messagesJson
+                .map((m) => Message.fromJson(m as Map<String, dynamic>))
+                .toList();
+
+            return ApiResponse.success(SearchResponse(
+                messages: messages,
+                hasMore: data['hasMore'] as bool? ?? false,
+                query: data['query'] as String? ?? trimmed,
             ));
         }
         return ApiResponse.error(response.error!, statusCode: response.statusCode);
