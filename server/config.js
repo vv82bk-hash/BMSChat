@@ -66,7 +66,8 @@ module.exports = {
     // 🌐 СЕРВЕР
     // -----------------------------------------------------
     PORT: parseInt(process.env.PORT, 10) || 5000,
-    HOST: process.env.HOST || '0.0.0.0',
+    // Onreza может подставлять HOSTNAME вместо HOST
+    HOST: process.env.HOST || process.env.HOSTNAME || '0.0.0.0',
     NODE_ENV: process.env.NODE_ENV || 'development',
 
     IS_PRODUCTION: process.env.NODE_ENV === 'production',
@@ -96,8 +97,10 @@ module.exports = {
     DB_POOL_IDLE_TIMEOUT: parseInt(process.env.DB_POOL_IDLE_TIMEOUT, 10) || 30000,
     DB_POOL_CONNECTION_TIMEOUT: parseInt(process.env.DB_POOL_CONNECTION_TIMEOUT, 10) || 5000,
 
-    // SSL для PostgreSQL (ONREZA требует require)
-    DB_SSL: process.env.DB_SSL !== 'false',
+    // SSL для PostgreSQL.
+    // По умолчанию ВЫКЛЮЧЕН (для внутренней Managed PostgreSQL на Onreza).
+    // Включается только если явно задано DB_SSL=true.
+    DB_SSL: process.env.DB_SSL === 'true',
 
     // -----------------------------------------------------
     // 📸 ФАЙЛЫ

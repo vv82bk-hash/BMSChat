@@ -8,12 +8,11 @@
 //   • _prodUrl
 //   • _localUrlAndroid (для теста на реальном телефоне)
 //
-// ⚠️ Backend (Node.js) — это ОТДЕЛЬНЫЙ сервер от Supabase.
-// Supabase — это только база данных. Flutter общается
-// с backend'ом, а backend — с Supabase.
+// ⚠️ Backend (Node.js) и PostgreSQL развёрнуты на Onreza.
+// Flutter общается с backend'ом по HTTPS/WSS.
 //
 // Схема:
-//   Flutter → Backend (Node.js, облако) → Supabase (PostgreSQL)
+//   Flutter → Backend (Node.js, Onreza) → PostgreSQL (Onreza)
 // =====================================================
 
 import 'dart:io' show Platform;
@@ -23,22 +22,21 @@ class Constants {
     // =====================================================
     // 🌍 БАЗОВЫЙ URL СЕРВЕРА
     // =====================================================
-    // ⚠️ Backend развёрнут в облаке (Рег.облако).
-    // Публичный IP: 194.226.123.103
-    // Порт: 5000
+    // ⚠️ Backend развёрнут на Onreza (Production).
+    // Публичный адрес: https://bmschat-vv82bk-nwjc.onreza.app
     //
     // 🎯 APK подключается с любой сети (сотовая, Wi-Fi).
     // 🎯 Web на компьютере использует localhost:5000
     //     для локальной разработки.
     // =====================================================
 
-    /// Продакшн — облачный backend на сервере Рег.облака.
+    /// Продакшн — backend на Onreza.
     /// 🎯 Доступен из любой сети (сотовая, Wi-Fi).
-    static const String _prodUrl = 'http://194.226.123.103:5000';
+    static const String _prodUrl = 'https://bmschat-vv82bk-nwjc.onreza.app';
 
-    /// Debug-сборка — тот же облачный backend.
+    /// Debug-сборка — тот же backend на Onreza.
     /// 🎯 Работает с любого телефона, в любой сети.
-    static const String _localUrlAndroid = 'http://194.226.123.103:5000';
+    static const String _localUrlAndroid = 'https://bmschat-vv82bk-nwjc.onreza.app';
 
     /// Локальная разработка (iOS-симулятор / web)
     /// 🎯 Для web-тестирования на компьютере.
