@@ -11,6 +11,8 @@
 // 🎯 ПРОСМОТР ФОТО: InstaImageViewer (зум + свайп вниз)
 // 🎯 ПРОФИЛЬ: тап по имени отправителя → onSenderTap
 // 🎯 АВАТАР: мини-аватар рядом с именем отправителя
+// 🎯 ДОКУМЕНТЫ: карточка файла с иконкой по типу,
+//   именем, размером и открытием через FileDownloader
 // =====================================================
 
 import 'dart:ui' as ui;
@@ -22,6 +24,7 @@ import 'package:just_audio/just_audio.dart';
 
 import '../config/constants.dart';
 import '../models/message.dart';
+import '../services/file_downloader.dart';
 import '../themes/rasta_theme.dart';
 
 class MessageBubble extends StatelessWidget {
@@ -517,34 +520,16 @@ class MessageBubble extends StatelessWidget {
     // =====================================================
     // 📄 ФАЙЛ
     // =====================================================
+    // 🎯 ДОКУМЕНТЫ: карточка с иконкой по типу, именем,
+    // размером и кнопкой открытия.
+    // =====================================================
     Widget _buildFile(Message message, bool isOwn) {
-        final path = message.filePath!;
-        final fileName = path.split('/').last;
-
-        return Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-                Icon(
-                    Icons.insert_drive_file_outlined,
-                    color: isOwn ? Colors.black54 : RastaTheme.rastaYellow,
-                    size: 32,
-                ),
-                const SizedBox(width: 8),
-                Flexible(
-                    child: Text(
-                        fileName,
-                        style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                            color: isOwn
-                                ? RastaTheme.bubbleOwnText
-                                : RastaTheme.bubbleOtherText,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                    ),
-                ),
-            ],
+        return _FileMessageWidget(
+            filePath: message.filePath!,
+            displayName: message.fileDisplayName,
+            extension: message.fileExtension,
+            formattedSize: message.formattedFileSize,
+            isOwn: isOwn,
         );
     }
 
@@ -563,6 +548,270 @@ class MessageBubble extends StatelessWidget {
                 fontStyle:
                     message.isDeleted ? FontStyle.italic : FontStyle.normal,
                 height: 1.3,
+            ),
+        );
+    }
+}
+
+// =====================================================
+// 📄 ВИДЖЕТ ФАЙЛОВОГО СООБЩЕНИЯ
+// =====================================================
+// Карточка: иконка по типу + имя + размер + кнопка открытия.
+// Клик → FileDownloader.open() → SnackBar с результатом.
+// =====================================================
+
+class _FileMessageWidget extends StatefulWidget {
+    final String filePath;
+    final String? displayName;
+    final String? extension;
+    final String? formattedSize;
+    final bool isOwn;
+
+    const _FileMessageWidget({
+        required this.filePath,
+        required this.displayName,
+        required this.extension,
+        required this.formattedSize,
+        required this.isOwn,
+    });
+
+    @override
+    State<_FileMessageWidget> createState() => _FileMessageWidgetState();
+}
+
+class _FileMessageWidgetState extends State<_FileMessageWidget> {
+    bool _isOpening = false;
+
+    /// Иконка по расширению файла.
+    IconData _fileIcon(String? ext) {
+        switch (ext) {
+            case '.pdf':
+                return Icons.picture_as_pdf_outlined;
+            case '.doc':
+            case '.docx':
+                return Icons.description_outlined;
+            case '.xls':
+            case '.xlsx':
+                return Icons.table_chart_outlined;
+            case '.ppt':
+            case '.pptx':
+                return Icons.slideshow_outlined;
+            case '.txt':
+            case '.csv':
+                return Icons.text_snippet_outlined;
+            case '.zip':
+            case '.rar':
+            case '.7z':
+                return Icons.folder_zip_outlined;
+            case '.apk':
+                return Icons.android;
+            default:
+                return Icons.insert_drive_file_outlined;
+        }
+    }
+
+    /// Цвет иконки по расширению.
+    Color _fileColor(String? ext) {
+        switch (ext) {
+            case '.pdf':
+                return const Color(0xFFE53935); // красный
+            case '.doc':
+            case '.docx':
+                return const Color(0xFF1E88E5); // синий
+            case '.xls':
+            case '.xlsx':
+                return const Color(0xFF43A047); // зелёный
+            case '.ppt':
+            case '.pptx':
+                return const Color(0xFFFB8C00); // оранжевый
+            case '.txt':
+            case '.csv':
+                return const Color(0xFF757575); // серый
+            case '.zip':
+            case '.rar':
+            case '.7z':
+                return const Color(0xFFFB8C00); // оранжевый
+            case '.apk':
+                return const Color(0xFF43A047); // зелёный
+            default:
+                return RastaTheme.rastaYellow; // нейтральный
+        }
+    }
+
+    Future<void> _open() async {
+        if (_isOpening) return;
+
+        setState(() => _isOpening = true);
+
+        try {
+            final result = await FileDownloader.open(
+                filePath: widget.filePath,
+                displayName: widget.displayName,
+            );
+
+            if (!mounted) return;
+
+            switch (result.status) {
+                case FileOpenStatus.success:
+                    // Всё хорошо — системное приложение открылось.
+                    // SnackBar не нужен, чтобы не отвлекать.
+                    break;
+
+                case FileOpenStatus.noApp:
+                    _showInfo(
+                        result.message ??
+                            'Нет приложения для открытия этого файла',
+                    );
+                    break;
+
+                case FileOpenStatus.error:
+                    _showError(result.message ?? 'Не удалось открыть файл');
+                    break;
+            }
+        } catch (e) {
+            if (!mounted) return;
+            _showError('Ошибка открытия: $e');
+        } finally {
+            if (mounted) {
+                setState(() => _isOpening = false);
+            }
+        }
+    }
+
+    void _showInfo(String message) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+                content: Text(message),
+                backgroundColor: RastaTheme.success,
+                behavior: SnackBarBehavior.floating,
+                duration: const Duration(seconds: 2),
+            ),
+        );
+    }
+
+    void _showError(String message) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+                content: Text(message),
+                backgroundColor: RastaTheme.error,
+                behavior: SnackBarBehavior.floating,
+            ),
+        );
+    }
+
+    @override
+    Widget build(BuildContext context) {
+        final name = widget.displayName ?? 'Файл';
+        final ext = widget.extension?.replaceFirst('.', '').toUpperCase();
+        final size = widget.formattedSize;
+
+        // Подстрока «PDF · 12.3 МБ» (или только одно из них)
+        final subtitleParts = <String>[];
+        if (ext != null && ext.isNotEmpty) subtitleParts.add(ext);
+        if (size != null && size.isNotEmpty) subtitleParts.add(size);
+        final subtitle = subtitleParts.join(' · ');
+
+        final iconColor = _fileColor(widget.extension);
+        final textColor = widget.isOwn
+            ? RastaTheme.bubbleOwnText
+            : RastaTheme.bubbleOtherText;
+        final subtitleColor = widget.isOwn
+            ? Colors.black54
+            : RastaTheme.textMuted;
+
+        return GestureDetector(
+            onTap: _open,
+            child: Container(
+                constraints: const BoxConstraints(maxWidth: 280),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.08),
+                        width: 0.5,
+                    ),
+                ),
+                child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                        // ── Иконка ──
+                        Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                                color: iconColor.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Center(
+                                child: Icon(
+                                    _fileIcon(widget.extension),
+                                    color: iconColor,
+                                    size: 24,
+                                ),
+                            ),
+                        ),
+
+                        const SizedBox(width: 10),
+
+                        // ── Имя + подстрока ──
+                        Flexible(
+                            child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                    Text(
+                                        name,
+                                        style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600,
+                                            color: textColor,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                    ),
+                                    if (subtitle.isNotEmpty) ...[
+                                        const SizedBox(height: 2),
+                                        Text(
+                                            subtitle,
+                                            style: TextStyle(
+                                                fontSize: 11,
+                                                color: subtitleColor,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                        ),
+                                    ],
+                                ],
+                            ),
+                        ),
+
+                        const SizedBox(width: 8),
+
+                        // ── Кнопка открытия / спиннер ──
+                        if (_isOpening)
+                            const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    valueColor:
+                                        AlwaysStoppedAnimation<Color>(
+                                            RastaTheme.rastaYellow,
+                                        ),
+                                ),
+                            )
+                        else
+                            Icon(
+                                Icons.download_rounded,
+                                size: 22,
+                                color: textColor.withValues(alpha: 0.85),
+                            ),
+                    ],
+                ),
             ),
         );
     }

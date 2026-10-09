@@ -49,6 +49,8 @@ dependencies:
   flutter_animate: ^4.5.0
   image_picker: 1.0.4
   file_picker: ^8.1.2
+  open_filex: ^4.5.0
+  url_launcher: ^6.3.1
 
   # 🎯 ШАГ 10: пикер эмодзи для аватарок каналов
   emoji_picker_flutter: ^4.5.4
