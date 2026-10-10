@@ -24,7 +24,9 @@
 // 🎯 CLEAR: пункт «Очистить историю» → подтверждение + вызов
 // 🎯 КЭШ (Уровень 1): RefreshIndicator (pull-to-refresh) для
 //    принудительного обновления сообщений с сервера
-// 🎯 ДОКУМЕНТЫ (Подэтап 1): выбор и отправка файлов через file_picker
+// 🎯 ДОКУМЕНТЫ: выбор и отправка файлов через file_picker
+// 🎯 ПОЛЛЫ: пункт «Голосование» в меню 📎 + CreatePollScreen
+// 🎯 ПИНЫ: шапка закреплённого + пункт «Закрепить/Открепить»
 // =====================================================
 
 import 'dart:async';
@@ -39,6 +41,7 @@ import 'package:provider/provider.dart';
 
 import '../models/chat.dart';
 import '../models/message.dart';
+import '../models/poll.dart';
 import '../providers/auth_provider.dart';
 import '../providers/chat_provider.dart';
 import '../services/voice_recorder_service.dart';
@@ -48,6 +51,7 @@ import '../widgets/message_bubble.dart';
 import '../widgets/reaction_picker.dart';
 import 'channel_settings_screen.dart';
 import 'chat_info_screen.dart';
+import 'create_poll_screen.dart';
 import 'group_settings_screen.dart';
 import 'user_profile_screen.dart';
 import 'users_screen.dart';
@@ -55,11 +59,11 @@ import 'users_screen.dart';
 // =====================================================
 // 🎯 ВЫБОР ИСТОЧНИКА ФАЙЛА
 // =====================================================
-// Используется для showModalBottomSheet в _pickFile.
 enum _FileAction {
     gallery,
     camera,
     document,
+    poll,
 }
 
 class ChatScreen extends StatefulWidget {
@@ -79,10 +83,8 @@ class _ChatScreenState extends State<ChatScreen> {
     final _scrollController = ScrollController();
     final _imagePicker = ImagePicker();
 
-    // 🎯 FocusNode — для управления клавиатурой
     final _inputFocusNode = FocusNode();
 
-    // 🎤 Сервис записи голосовых
     final _voiceRecorder = VoiceRecorderService();
 
     bool _isTyping = false;
@@ -93,34 +95,25 @@ class _ChatScreenState extends State<ChatScreen> {
     final Map<int, GlobalKey> _messageKeys = {};
     bool _showScrollButton = false;
 
-    // 🎯 ПАГИНАЦИЯ
     bool _isLoadingMore = false;
     int _lastSeenLastId = 0;
 
-    // 🎯 ЭТАП D.4: троттлинг _triggerLoadMore — не чаще 1 раза в 300 ms
     DateTime? _lastLoadMoreAttempt;
 
-    // 🎯 ШАГ 15: индикатор вступления в канал
     bool _isJoining = false;
 
-    // 🎯 ЭТАП B.2: счётчик новых сообщений ниже видимой области
     int _unreadBelowCount = 0;
 
-    // 🎯 ЭТАП B.3: кэш сообщений по id — для быстрого поиска reply
     final Map<int, Message> _messagesById = {};
 
-    // 🎯 ЭТАП E.1: показывать ли панель эмодзи
     bool _showEmojiPicker = false;
 
-    // 🎯 ПАНЕЛЬ 4 КНОПОК: видна только когда пользователь тапнул в поле
     bool _isInputFocused = false;
 
-    // 🎤 ГОЛОСОВЫЕ: состояние записи
     bool _isRecording = false;
     int _recordingSeconds = 0;
     bool _isSendingVoice = false;
 
-    // 🎯 ПОИСК: debounce для TextField
     Timer? _searchDebounce;
 
     @override
@@ -132,7 +125,6 @@ class _ChatScreenState extends State<ChatScreen> {
         WidgetsBinding.instance.addPostFrameCallback((_) async {
             final chat = Provider.of<ChatProvider>(context, listen: false);
 
-            // 🎯 FIX: загружаем чат и сообщения ЗДЕСЬ (перенесено из ChatsScreen)
             await chat.openChat(widget.chatId);
 
             if (!mounted) return;
@@ -148,7 +140,6 @@ class _ChatScreenState extends State<ChatScreen> {
         chat.removeListener(_onChatChanged);
         _scrollController.removeListener(_onScroll);
 
-        // 🎯 ПОИСК: отменяем debounce
         _searchDebounce?.cancel();
 
         _messageController.dispose();
@@ -179,7 +170,6 @@ class _ChatScreenState extends State<ChatScreen> {
     // 🔎 ПОИСК ПО СООБЩЕНИЯМ
     // ============================================
 
-    /// Открыть режим поиска.
     void _openSearch() {
         final chat = Provider.of<ChatProvider>(context, listen: false);
         chat.openSearch();
@@ -190,7 +180,6 @@ class _ChatScreenState extends State<ChatScreen> {
         });
     }
 
-    /// Закрыть режим поиска.
     void _closeSearch() {
         _searchDebounce?.cancel();
         _searchDebounce = null;
@@ -198,7 +187,6 @@ class _ChatScreenState extends State<ChatScreen> {
         chat.closeSearch();
     }
 
-    /// Обработка ввода в поиске с debounce 350 ms.
     void _onSearchChanged(String value) {
         _searchDebounce?.cancel();
         _searchDebounce = Timer(
@@ -211,17 +199,13 @@ class _ChatScreenState extends State<ChatScreen> {
         );
     }
 
-    /// Тап по результату — закрываем поиск и скроллим к сообщению.
     void _onSearchResultTap(Message message) {
         _closeSearch();
-        // Небольшая задержка, чтобы режим поиска успел выключиться
-        // и список сообщений снова отрисовался.
         WidgetsBinding.instance.addPostFrameCallback((_) {
             _scrollToMessage(message.id);
         });
     }
 
-    /// Подсветка совпадения в тексте (простая, без regex).
     List<TextSpan> _highlightMatch(String text, String query) {
         if (query.isEmpty) {
             return [TextSpan(text: text)];
@@ -259,7 +243,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
     // ============================================
     // 📜 СКРОЛЛ
-    // 🎯 ЭТАП D.4: оптимизирован
     // ============================================
     void _onScroll() {
         if (!_scrollController.hasClients) return;
@@ -303,7 +286,6 @@ class _ChatScreenState extends State<ChatScreen> {
         return _messageKeys.putIfAbsent(messageId, () => GlobalKey());
     }
 
-    /// 🎯 ЭТАП B.3: перестраиваем кэш сообщений по id
     void _rebuildMessagesCache(List<Message> messages) {
         _messagesById.clear();
         for (final m in messages) {
@@ -486,6 +468,22 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                         ListTile(
                             leading: const Icon(
+                                Icons.poll_outlined,
+                                color: RastaTheme.rastaYellow,
+                                size: 28,
+                            ),
+                            title: const Text(
+                                'Голосование',
+                                style: TextStyle(
+                                    color: RastaTheme.textPrimary,
+                                    fontSize: 16,
+                                ),
+                            ),
+                            onTap: () =>
+                                Navigator.pop(context, _FileAction.poll),
+                        ),
+                        ListTile(
+                            leading: const Icon(
                                 Icons.insert_drive_file_outlined,
                                 color: RastaTheme.rastaYellow,
                                 size: 28,
@@ -508,13 +506,16 @@ class _ChatScreenState extends State<ChatScreen> {
 
         if (action == null || !mounted) return;
 
-        // 🎯 Документ — отдельный поток через file_picker
+        if (action == _FileAction.poll) {
+            await _pickPoll();
+            return;
+        }
+
         if (action == _FileAction.document) {
             await _pickDocument();
             return;
         }
 
-        // 🎯 Фото — через image_picker
         final ImageSource source = action == _FileAction.gallery
             ? ImageSource.gallery
             : ImageSource.camera;
@@ -552,16 +553,12 @@ class _ChatScreenState extends State<ChatScreen> {
     // ============================================
     // 📄 ВЫБОР И ОТПРАВКА ДОКУМЕНТА
     // ============================================
-    // Через file_picker — поддерживает PDF, DOC/DOCX, XLS/XLSX,
-    // PPT/PPTX, TXT, CSV, ZIP/RAR/7Z, APK.
-    // Ограничение размера проверяется на сервере (10 МБ).
-    // ============================================
     Future<void> _pickDocument() async {
         try {
             final result = await FilePicker.platform.pickFiles(
                 type: FileType.any,
                 allowMultiple: false,
-                withData: true, // важно для web
+                withData: true,
             );
 
             if (result == null || result.files.isEmpty) return;
@@ -569,7 +566,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
             final picked = result.files.single;
 
-            // На мобильных path != null, на web — bytes
             final path = picked.path;
             final bytes = picked.bytes;
 
@@ -578,7 +574,6 @@ class _ChatScreenState extends State<ChatScreen> {
                 return;
             }
 
-            // Предварительная проверка размера (10 МБ)
             const maxBytes = 10 * 1024 * 1024;
             if (picked.size > maxBytes) {
                 _showError('Файл слишком большой (максимум 10 МБ)');
@@ -587,7 +582,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
             _showInfo('Загрузка файла...');
 
-            // Формируем XFile — на web через fromBytes, иначе через path
             final XFile xfile;
             if (path != null) {
                 xfile = XFile(path, name: picked.name);
@@ -616,10 +610,33 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     // ============================================
+    // 📊 СОЗДАНИЕ ГОЛОСОВАНИЯ
+    // ============================================
+    Future<void> _pickPoll() async {
+        try {
+            final created = await Navigator.push<Poll>(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => const CreatePollScreen(),
+                ),
+            );
+
+            if (!mounted) return;
+
+            if (created != null) {
+                _showInfo('Голосование создано');
+                _scrollToBottom();
+            }
+        } catch (e) {
+            if (!mounted) return;
+            _showError('Ошибка: $e');
+        }
+    }
+
+    // ============================================
     // 🎤 ГОЛОСОВЫЕ СООБЩЕНИЯ
     // ============================================
 
-    /// Старт записи. Вызывается по тапу на иконку микрофона.
     Future<void> _startVoiceRecording() async {
         if (kIsWeb) {
             _showInfo('Запись голосовых доступна только в мобильном приложении');
@@ -649,7 +666,6 @@ class _ChatScreenState extends State<ChatScreen> {
         });
     }
 
-    /// Остановка и отправка голосового.
     Future<void> _stopAndSendVoice() async {
         if (!_isRecording) return;
 
@@ -695,7 +711,6 @@ class _ChatScreenState extends State<ChatScreen> {
         }
     }
 
-    /// Отмена записи без отправки.
     Future<void> _cancelVoiceRecording() async {
         if (!_isRecording) return;
 
@@ -709,14 +724,12 @@ class _ChatScreenState extends State<ChatScreen> {
         });
     }
 
-    /// Форматирование таймера записи (ММ:СС)
     String _formatRecordingTime(int seconds) {
         final m = seconds ~/ 60;
         final s = seconds % 60;
         return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
     }
 
-    /// 🎤 Кнопка микрофона. Первый тап — старт, второй — стоп+отправка.
     void _pickVoice() {
         if (_isRecording) {
             _stopAndSendVoice();
@@ -738,7 +751,6 @@ class _ChatScreenState extends State<ChatScreen> {
         });
     }
 
-    /// 🎯 ЭТАП E.1: вставка эмодзи в позицию курсора
     void _insertEmoji(String emoji) {
         final text = _messageController.text;
         final selection = _messageController.selection;
@@ -822,7 +834,6 @@ class _ChatScreenState extends State<ChatScreen> {
         });
     }
 
-    /// 🎯 ЭТАП B.3: скролл к конкретному сообщению
     void _scrollToMessage(int messageId) {
         final key = _messageKeys[messageId];
         if (key == null || key.currentContext == null) {
@@ -838,7 +849,6 @@ class _ChatScreenState extends State<ChatScreen> {
         );
     }
 
-    /// 🎯 ПРОФИЛЬ: открыть чужой профиль
     void _openUserProfile(int userId) {
         Navigator.push(
             context,
@@ -985,7 +995,6 @@ class _ChatScreenState extends State<ChatScreen> {
         final me = Provider.of<AuthProvider>(context, listen: false).user;
         if (me == null) return false;
 
-        // Создатель не может покинуть группу
         if (chat.createdBy == me.id) return false;
 
         return chat.isMember;
@@ -1001,13 +1010,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
         if (!mounted) return;
 
-        // 🎯 Если пользователь вышел — закрываем экран чата
         if (result == 'left') {
             Navigator.pop(context);
             return;
         }
 
-        // 🎯 Если что-то изменилось — перезагружаем чаты
         if (result == true) {
             final chatProvider =
                 Provider.of<ChatProvider>(context, listen: false);
@@ -1015,7 +1022,6 @@ class _ChatScreenState extends State<ChatScreen> {
         }
     }
 
-    /// 🎯 Открыть экран информации о чате
     void _openChatInfo(Chat chat) {
         Navigator.push(
             context,
@@ -1100,7 +1106,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     // ============================================
-    // 🧹 ОЧИСТКА ИСТОРИИ ЧАТА (soft-delete)
+    // 🧹 ОЧИСТКА ИСТОРИИ ЧАТА
     // ============================================
     Future<void> _clearHistory(Chat chat) async {
         final confirmed = await showDialog<bool>(
@@ -1152,9 +1158,6 @@ class _ChatScreenState extends State<ChatScreen> {
         }
     }
 
-    // ============================================
-    // 🎯 ШАГ 15: ВСТУПИТЬ В КАНАЛ
-    // ============================================
     Future<void> _joinChannel() async {
         final chat = Provider.of<ChatProvider>(context, listen: false);
         final activeChat = chat.activeChat;
@@ -1176,16 +1179,45 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     // ============================================
+    // 🎯 ПИНЫ: ЗАКРЕПЛЕНИЕ / ОТКРЕПЛЕНИЕ
+    // ============================================
+    Future<void> _pinMessage(int messageId) async {
+        final chat = Provider.of<ChatProvider>(context, listen: false);
+
+        final success = await chat.pinMessage(messageId);
+
+        if (!mounted) return;
+
+        if (success) {
+            _showInfo('📌 Сообщение закреплено');
+        } else {
+            _showError(chat.messagesError ?? 'Не удалось закрепить');
+        }
+    }
+
+    Future<void> _unpinMessage() async {
+        final chat = Provider.of<ChatProvider>(context, listen: false);
+
+        final success = await chat.unpinMessage();
+
+        if (!mounted) return;
+
+        if (success) {
+            _showInfo('Сообщение откреплено');
+        } else {
+            _showError(chat.messagesError ?? 'Не удалось открепить');
+        }
+    }
+
+    // ============================================
     // 🎯 ЭТАП B.1: МЕНЮ «⋮» В APPBAR
     // ============================================
     Future<void> _openChatMenu(Chat chat) async {
         final canManage = _canManageChannel(chat);
         final isMember = chat.isMember;
 
-        // 🎯 Для каналов и групп — можно покинуть
         final canLeave = (chat.isChannel || chat.isGroup) && isMember;
 
-        // 🎯 Для группы — если не создатель, можно покинуть
         final canLeaveGroupOnly =
             chat.isGroup && isMember && _canLeaveGroup(chat);
 
@@ -1235,7 +1267,6 @@ class _ChatScreenState extends State<ChatScreen> {
                                 onTap: () => Navigator.pop(context, 'search'),
                             ),
 
-                            // 🎯 Mute/Unmute уведомлений
                             _menuTile(
                                 icon: chat.isMuted
                                     ? Icons.notifications_active_outlined
@@ -1254,7 +1285,6 @@ class _ChatScreenState extends State<ChatScreen> {
                                     Navigator.pop(context, 'clear'),
                             ),
 
-                            // 🎯 Настройки канала (создатель или командир)
                             if (chat.isChannel && canManage)
                                 _menuTile(
                                     icon: Icons.settings_outlined,
@@ -1263,7 +1293,6 @@ class _ChatScreenState extends State<ChatScreen> {
                                         Navigator.pop(context, 'settings'),
                                 ),
 
-                            // 🎯 Настройки группы (создатель или командир)
                             if (chat.isGroup && _canManageGroup(chat))
                                 _menuTile(
                                     icon: Icons.settings_outlined,
@@ -1274,7 +1303,6 @@ class _ChatScreenState extends State<ChatScreen> {
                                     ),
                                 ),
 
-                            // 🎯 Покинуть канал
                             if (chat.isChannel && canLeave)
                                 _menuTile(
                                     icon: Icons.logout,
@@ -1284,7 +1312,6 @@ class _ChatScreenState extends State<ChatScreen> {
                                         Navigator.pop(context, 'leave'),
                                 ),
 
-                            // 🎯 Покинуть группу (только если не создатель)
                             if (canLeaveGroupOnly)
                                 _menuTile(
                                     icon: Icons.logout,
@@ -1363,6 +1390,95 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     // ============================================
+    // 📌 ШАПКА ЗАКРЕПЛЁННОГО СООБЩЕНИЯ
+    // ============================================
+    Widget _buildPinnedHeader(Chat chat, ChatProvider provider) {
+        final pinned = chat.pinnedMessage;
+        if (pinned == null) return const SizedBox.shrink();
+
+        final sender = chat.pinnedSenderName;
+        final preview = chat.pinnedPreview ?? '';
+
+        return Material(
+            color: RastaTheme.surface,
+            child: InkWell(
+                onTap: () {
+                    _scrollToMessage(pinned.id);
+                },
+                child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                    ),
+                    decoration: const BoxDecoration(
+                        border: Border(
+                            bottom: BorderSide(
+                                color: RastaTheme.separator,
+                                width: 0.5,
+                            ),
+                        ),
+                    ),
+                    child: Row(
+                        children: [
+                            const Icon(
+                                Icons.push_pin,
+                                color: RastaTheme.rastaYellow,
+                                size: 20,
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                                child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                        if (sender != null && sender.isNotEmpty)
+                                            Text(
+                                                sender,
+                                                style: const TextStyle(
+                                                    fontSize: 11,
+                                                    fontWeight: FontWeight.w700,
+                                                    color: RastaTheme
+                                                        .rastaYellow,
+                                                ),
+                                                maxLines: 1,
+                                                overflow:
+                                                    TextOverflow.ellipsis,
+                                            ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                            preview.isEmpty
+                                                ? 'Закреплённое сообщение'
+                                                : preview,
+                                            style: const TextStyle(
+                                                fontSize: 13,
+                                                color: RastaTheme.textPrimary,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                        ),
+                                    ],
+                                ),
+                            ),
+                            const SizedBox(width: 8),
+                            IconButton(
+                                icon: const Icon(
+                                    Icons.close,
+                                    size: 20,
+                                    color: RastaTheme.textMuted,
+                                ),
+                                tooltip: 'Открепить',
+                                splashRadius: 20,
+                                onPressed: _unpinMessage,
+                            ),
+                        ],
+                    ),
+                ),
+            ),
+        );
+    }
+
+    // ============================================
     // 🎨 UI
     // ============================================
     @override
@@ -1412,6 +1528,12 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             body: Column(
                 children: [
+                    // 🎯 ПИНЫ: шапка закреплённого сообщения
+                    if (!chat.isSearching &&
+                        activeChat != null &&
+                        activeChat.hasPinned)
+                        _buildPinnedHeader(activeChat, chat),
+
                     Expanded(
                         child: chat.isSearching
                             ? _buildSearchResults(chat)
@@ -1498,7 +1620,6 @@ class _ChatScreenState extends State<ChatScreen> {
                             ),
                     ),
 
-                    // 🎯 ПОИСК: нижняя панель ввода скрывается в режиме поиска
                     if (!chat.isSearching) ...[
                         if (isChannelNotMember)
                             _buildJoinChannelBlock(activeChat)
@@ -1538,11 +1659,8 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     // =====================================================
-    // 🔄 PULL-TO-REFRESH: пустое состояние
+    // 🔄 PULL-TO-REFRESH
     // =====================================================
-    // В пустом чате тоже должен работать pull-to-refresh.
-    // Оборачиваем empty state в ListView с AlwaysScrollable,
-    // чтобы RefreshIndicator мог поймать жест.
     Widget _buildEmptyRefreshable(ChatProvider chat, bool isGeneral) {
         return RefreshIndicator(
             color: RastaTheme.rastaYellow,
@@ -1564,9 +1682,6 @@ class _ChatScreenState extends State<ChatScreen> {
         );
     }
 
-    // =====================================================
-    // 🔄 PULL-TO-REFRESH: список сообщений
-    // =====================================================
     Widget _buildMessagesRefreshable(
         ChatProvider chat,
         int currentUserId,
@@ -1662,7 +1777,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     // =====================================================
-    // 🔎 ПОИСК: обычный заголовок AppBar (вынесен из build)
+    // 🔎 ПОИСК: обычный заголовок AppBar
     // =====================================================
     Widget _buildAppBarTitle(Chat? activeChat, ChatProvider chat) {
         return Row(
@@ -1763,7 +1878,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     // =====================================================
-    // 🔎 ПОИСК: тело со списком результатов
+    // 🔎 ПОИСК: результаты
     // =====================================================
     Widget _buildSearchResults(ChatProvider chat) {
         final query = chat.searchQuery;
@@ -1815,7 +1930,6 @@ class _ChatScreenState extends State<ChatScreen> {
                 (chat.searchHasMore ? 1 : 0),
             itemBuilder: (context, index) {
                 if (index == chat.searchResults.length) {
-                    // Автоподгрузка следующей страницы
                     WidgetsBinding.instance.addPostFrameCallback((_) {
                         chat.loadMoreSearchResults();
                     });
@@ -2637,6 +2751,9 @@ class _ChatScreenState extends State<ChatScreen> {
         final auth = Provider.of<AuthProvider>(context, listen: false);
         final userId = auth.user?.id ?? 0;
 
+        // 🎯 ПИНЫ: закреплено ли это сообщение?
+        final isPinned = chat.activeChat?.pinnedMessageId == message.id;
+
         final myReactions = message.reactions
             .where((r) => r.userId == userId)
             .map((r) => r.emoji)
@@ -2708,6 +2825,39 @@ class _ChatScreenState extends State<ChatScreen> {
                                                     Navigator.pop(
                                                         bottomSheetContext);
                                                     chat.setReplyTo(message);
+                                                },
+                                            ),
+
+                                            // 🎯 ПИНЫ: закрепить / открепить
+                                            ListTile(
+                                                leading: Icon(
+                                                    isPinned
+                                                        ? Icons.push_pin
+                                                        : Icons
+                                                            .push_pin_outlined,
+                                                    color: RastaTheme
+                                                        .rastaYellow,
+                                                ),
+                                                title: Text(
+                                                    isPinned
+                                                        ? 'Открепить'
+                                                        : 'Закрепить',
+                                                    style: const TextStyle(
+                                                        color: RastaTheme
+                                                            .textPrimary,
+                                                        fontSize: 16,
+                                                    ),
+                                                ),
+                                                onTap: () {
+                                                    Navigator.pop(
+                                                        bottomSheetContext);
+                                                    if (isPinned) {
+                                                        _unpinMessage();
+                                                    } else {
+                                                        _pinMessage(
+                                                            message.id,
+                                                        );
+                                                    }
                                                 },
                                             ),
 

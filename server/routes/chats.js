@@ -11,6 +11,9 @@
 //   🎯 2026-10-09 (Группы): редактирование группы + выход из группы
 //   🎯 2026-10-09 (Mute): is_muted в GET /api/chats + mute/unmute роуты
 //   🎯 2026-10-09 (Clear): POST /api/chats/:id/clear — soft-delete истории
+//   🎯 2026-10-10 (Polls): POST /api/chats/:chatId/polls — создание голосования
+//   🎯 2026-10-10 (Pins): pinned_message в GET /api/chats +
+//                          POST/DELETE /api/chats/:chatId/pin
 // =====================================================
 
 const express = require('express');
@@ -27,6 +30,10 @@ const {
     isCommanderOrHigher,
 } = require('../utils/chatAccess');
 const logger = require('../utils/logger');
+const {
+    loadPoll,
+    POLL_LIMITS,
+} = require('../utils/pollAccess');
 
 // =====================================================
 // 📋 GET /api/chats
@@ -82,7 +89,30 @@ router.get('/', authMiddleware, async (req, res) => {
                     SELECT 1 FROM chat_mutes
                     WHERE chat_mutes.user_id = $1
                       AND chat_mutes.chat_id = c.id
-                ) as is_muted
+                ) as is_muted,
+                c.pinned_message_id,
+                CASE
+                    WHEN c.pinned_message_id IS NOT NULL THEN (
+                        SELECT json_build_object(
+                            'id', pm.id,
+                            'chat_id', pm.chat_id,
+                            'sender_id', pm.sender_id,
+                            'text', pm.text,
+                            'reply_to_id', pm.reply_to_id,
+                            'is_deleted', pm.is_deleted,
+                            'is_edited', pm.is_edited,
+                            'created_at', pm.created_at,
+                            'updated_at', pm.updated_at,
+                            'username', pu.username,
+                            'display_name', pu.display_name,
+                            'avatar', pu.avatar
+                        )
+                        FROM messages pm
+                        INNER JOIN users pu ON pu.id = pm.sender_id
+                        WHERE pm.id = c.pinned_message_id
+                    )
+                    ELSE NULL
+                END as pinned_message
             FROM chats c
             LEFT JOIN chat_members cm ON cm.chat_id = c.id AND cm.user_id = $1
             WHERE c.is_active = TRUE
@@ -153,7 +183,6 @@ router.post('/', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'Название чата максимум 100 символов' });
         }
 
-        // 🎯 Проверка прав на создание
         if (type === 'channel') {
             const canCreate = await pool.query(`
                 SELECT 1 FROM user_roles ur
@@ -166,7 +195,6 @@ router.post('/', authMiddleware, async (req, res) => {
                 return res.status(403).json({ error: 'Недостаточно прав для создания канала' });
             }
         } else {
-            // 🎯 Группа — любой подтверждённый пользователь
             const isApproved = await pool.query(
                 'SELECT is_approved FROM users WHERE id = $1',
                 [req.user.id]
@@ -402,7 +430,6 @@ router.post('/:id/mute', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'Некорректный ID чата' });
         }
 
-        // 🎯 Проверяем, что пользователь участник чата
         const access = await checkChatAccess(chatId, req.user.id);
         if (!access.allowed) {
             return res.status(403).json({ error: access.reason });
@@ -460,15 +487,6 @@ router.delete('/:id/mute', authMiddleware, async (req, res) => {
 // =====================================================
 // 🧹 POST /api/chats/:id/clear — очистка истории (soft-delete)
 // =====================================================
-// Soft-delete всех сообщений чата:
-//   • is_deleted = TRUE
-//   • text = NULL
-//   • updated_at = NOW()
-// Права:
-//   • private  — любой участник
-//   • group    — создатель или командир+
-//   • channel  — canManageChannel (создатель, админ, командир)
-// =====================================================
 router.post('/:id/clear', authMiddleware, async (req, res) => {
     try {
         const chatId = parseInt(req.params.id, 10);
@@ -476,7 +494,6 @@ router.post('/:id/clear', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'Некорректный ID чата' });
         }
 
-        // 1. Проверяем существование чата и получаем его тип + создателя
         const chatResult = await pool.query(
             'SELECT type, created_by, is_active FROM chats WHERE id = $1',
             [chatId]
@@ -493,20 +510,16 @@ router.post('/:id/clear', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'Чат деактивирован' });
         }
 
-        // 2. Проверяем права на очистку
         let allowed = false;
 
         if (chatType === 'private') {
-            // Личный чат — доступ у участников
             const access = await checkChatAccess(chatId, req.user.id);
             allowed = access.allowed;
         } else if (chatType === 'group') {
-            // Группа — создатель или командир+
             const isCreator = createdBy === req.user.id;
             const isAdmin = await isCommanderOrHigher(req.user.id);
             allowed = isCreator || isAdmin;
         } else if (chatType === 'channel') {
-            // Канал — canManageChannel
             allowed = await canManageChannel(chatId, req.user.id);
         }
 
@@ -516,7 +529,6 @@ router.post('/:id/clear', authMiddleware, async (req, res) => {
             });
         }
 
-        // 3. Soft-delete всех неудалённых сообщений чата
         const updateResult = await pool.query(`
             UPDATE messages
             SET is_deleted = TRUE,
@@ -535,7 +547,6 @@ router.post('/:id/clear', authMiddleware, async (req, res) => {
             by: req.user.id,
         });
 
-        // 4. Socket.IO-уведомление всем в комнате чата
         const io = req.app.get('io');
         if (io) {
             io.to(`chat_${chatId}`).emit('history_cleared', {
@@ -554,6 +565,327 @@ router.post('/:id/clear', authMiddleware, async (req, res) => {
         console.log('🔴 POST /api/chats/:id/clear ERROR:', error.message);
         console.log('STACK:', error.stack);
         logger.error('Ошибка очистки истории', error);
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
+
+// =====================================================
+// 📊 POST /api/chats/:chatId/polls — создать голосование
+// =====================================================
+router.post('/:chatId/polls', authMiddleware, async (req, res) => {
+    const client = await pool.connect();
+
+    try {
+        const chatId = parseInt(req.params.chatId, 10);
+        if (!Number.isInteger(chatId) || chatId <= 0) {
+            return res.status(400).json({ error: 'Некорректный ID чата' });
+        }
+
+        const { question, options, is_multiple, is_anonymous } = req.body;
+
+        const trimmedQuestion = (question || '').trim();
+        if (!trimmedQuestion) {
+            return res.status(400).json({ error: 'Вопрос обязателен' });
+        }
+        if (trimmedQuestion.length > POLL_LIMITS.QUESTION_MAX) {
+            return res.status(400).json({
+                error: `Вопрос не длиннее ${POLL_LIMITS.QUESTION_MAX} символов`,
+            });
+        }
+
+        if (!Array.isArray(options)) {
+            return res.status(400).json({ error: 'options должен быть массивом' });
+        }
+
+        const cleanOptions = options
+            .map((o) => (typeof o === 'string' ? o.trim() : ''))
+            .filter((o) => o.length > 0);
+
+        if (cleanOptions.length < POLL_LIMITS.OPTIONS_MIN) {
+            return res.status(400).json({
+                error: `Минимум ${POLL_LIMITS.OPTIONS_MIN} варианта`,
+            });
+        }
+        if (cleanOptions.length > POLL_LIMITS.OPTIONS_MAX) {
+            return res.status(400).json({
+                error: `Максимум ${POLL_LIMITS.OPTIONS_MAX} вариантов`,
+            });
+        }
+        for (const opt of cleanOptions) {
+            if (opt.length > POLL_LIMITS.OPTION_MAX) {
+                return res.status(400).json({
+                    error: `Вариант не длиннее ${POLL_LIMITS.OPTION_MAX} символов`,
+                });
+            }
+        }
+
+        const access = await checkChatAccess(chatId, req.user.id);
+        if (!access.allowed) {
+            return res.status(403).json({ error: access.reason });
+        }
+
+        await client.query('BEGIN');
+
+        const messageResult = await client.query(`
+            INSERT INTO messages (chat_id, sender_id, text)
+            VALUES ($1, $2, $3)
+            RETURNING id, created_at
+        `, [chatId, req.user.id, 'POLL:0']);
+        const messageId = messageResult.rows[0].id;
+
+        const pollResult = await client.query(`
+            INSERT INTO polls (
+                chat_id, message_id, created_by, question,
+                is_multiple, is_anonymous
+            )
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING id, created_at
+        `, [
+            chatId,
+            messageId,
+            req.user.id,
+            trimmedQuestion,
+            Boolean(is_multiple),
+            Boolean(is_anonymous),
+        ]);
+        const pollId = pollResult.rows[0].id;
+
+        await client.query(`
+            UPDATE messages SET text = $1 WHERE id = $2
+        `, [`POLL:${pollId}`, messageId]);
+
+        for (let i = 0; i < cleanOptions.length; i++) {
+            await client.query(`
+                INSERT INTO poll_options (poll_id, text, position)
+                VALUES ($1, $2, $3)
+            `, [pollId, cleanOptions[i], i]);
+        }
+
+        await client.query('COMMIT');
+
+        const poll = await loadPoll(pollId, req.user.id);
+
+        const io = req.app.get('io');
+        if (io) {
+            const messageFull = await pool.query(`
+                SELECT
+                    m.id, m.chat_id, m.sender_id, m.text, m.reply_to_id,
+                    m.is_deleted, m.is_edited, m.created_at, m.updated_at,
+                    u.username, u.display_name, u.avatar
+                FROM messages m
+                INNER JOIN users u ON u.id = m.sender_id
+                WHERE m.id = $1
+            `, [messageId]);
+
+            if (messageFull.rows.length > 0) {
+                io.to(`chat_${chatId}`).emit('new_message', {
+                    ...messageFull.rows[0],
+                    reactions: [],
+                    attachments: [],
+                    poll,
+                });
+            }
+        }
+
+        logger.success('Голосование создано', {
+            pollId,
+            chatId,
+            messageId,
+            by: req.user.id,
+            options: cleanOptions.length,
+        });
+
+        res.status(201).json({
+            message: 'Голосование создано',
+            poll,
+        });
+    } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.log('🔴 POST /api/chats/:chatId/polls ERROR:', error.message);
+        console.log('STACK:', error.stack);
+        logger.error('Ошибка создания голосования', error);
+        res.status(500).json({ error: 'Ошибка сервера' });
+    } finally {
+        client.release();
+    }
+});
+
+// =====================================================
+// 📌 POST /api/chats/:chatId/pin — закрепить сообщение
+// =====================================================
+// Тело: { message_id }
+// Права:
+//   • private/general/group — любой участник
+//   • channel — только canManageChannel
+// =====================================================
+router.post('/:chatId/pin', authMiddleware, async (req, res) => {
+    try {
+        const chatId = parseInt(req.params.chatId, 10);
+        if (!Number.isInteger(chatId) || chatId <= 0) {
+            return res.status(400).json({ error: 'Некорректный ID чата' });
+        }
+
+        const messageId = parseInt(req.body.message_id, 10);
+        if (!Number.isInteger(messageId) || messageId <= 0) {
+            return res.status(400).json({ error: 'Некорректный ID сообщения' });
+        }
+
+        const access = await checkChatAccess(chatId, req.user.id);
+        if (!access.allowed) {
+            return res.status(403).json({ error: access.reason });
+        }
+
+        const chatResult = await pool.query(
+            'SELECT type FROM chats WHERE id = $1',
+            [chatId]
+        );
+        if (chatResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Чат не найден' });
+        }
+        const chatType = chatResult.rows[0].type;
+
+        if (chatType === 'channel') {
+            const canManage = await canManageChannel(chatId, req.user.id);
+            if (!canManage) {
+                return res.status(403).json({
+                    error: 'В канале закреплять может только админ',
+                });
+            }
+        }
+
+        const msgResult = await pool.query(`
+            SELECT
+                m.id, m.chat_id, m.sender_id, m.text, m.reply_to_id,
+                m.is_deleted, m.is_edited, m.created_at, m.updated_at,
+                u.username, u.display_name, u.avatar
+            FROM messages m
+            INNER JOIN users u ON u.id = m.sender_id
+            WHERE m.id = $1 AND m.chat_id = $2
+        `, [messageId, chatId]);
+
+        if (msgResult.rows.length === 0) {
+            return res.status(404).json({
+                error: 'Сообщение не найдено в этом чате',
+            });
+        }
+
+        const message = msgResult.rows[0];
+
+        if (message.is_deleted) {
+            return res.status(400).json({
+                error: 'Нельзя закрепить удалённое сообщение',
+            });
+        }
+
+        await pool.query(`
+            UPDATE chats
+            SET pinned_message_id = $1, updated_at = NOW()
+            WHERE id = $2
+        `, [messageId, chatId]);
+
+        logger.success('Сообщение закреплено', {
+            chatId,
+            messageId,
+            by: req.user.id,
+        });
+
+        const io = req.app.get('io');
+        if (io) {
+            io.to(`chat_${chatId}`).emit('message_pinned', {
+                chatId,
+                messageId,
+                pinnedBy: req.user.id,
+                message: {
+                    ...message,
+                    reactions: [],
+                    attachments: [],
+                },
+            });
+        }
+
+        res.json({
+            message: 'Сообщение закреплено',
+            pinned_message_id: messageId,
+        });
+    } catch (error) {
+        console.log('🔴 POST /api/chats/:chatId/pin ERROR:', error.message);
+        console.log('STACK:', error.stack);
+        logger.error('Ошибка закрепления сообщения', error);
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
+
+// =====================================================
+// 📌 DELETE /api/chats/:chatId/pin — открепить сообщение
+// =====================================================
+// Права:
+//   • private/general/group — любой участник
+//   • channel — только canManageChannel
+// =====================================================
+router.delete('/:chatId/pin', authMiddleware, async (req, res) => {
+    try {
+        const chatId = parseInt(req.params.chatId, 10);
+        if (!Number.isInteger(chatId) || chatId <= 0) {
+            return res.status(400).json({ error: 'Некорректный ID чата' });
+        }
+
+        const access = await checkChatAccess(chatId, req.user.id);
+        if (!access.allowed) {
+            return res.status(403).json({ error: access.reason });
+        }
+
+        const chatResult = await pool.query(
+            'SELECT type, pinned_message_id FROM chats WHERE id = $1',
+            [chatId]
+        );
+        if (chatResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Чат не найден' });
+        }
+
+        const chatType = chatResult.rows[0].type;
+        const currentPinned = chatResult.rows[0].pinned_message_id;
+
+        if (!currentPinned) {
+            return res.status(400).json({
+                error: 'Нет закреплённого сообщения',
+            });
+        }
+
+        if (chatType === 'channel') {
+            const canManage = await canManageChannel(chatId, req.user.id);
+            if (!canManage) {
+                return res.status(403).json({
+                    error: 'В канале откреплять может только админ',
+                });
+            }
+        }
+
+        await pool.query(`
+            UPDATE chats
+            SET pinned_message_id = NULL, updated_at = NOW()
+            WHERE id = $1
+        `, [chatId]);
+
+        logger.success('Сообщение откреплено', {
+            chatId,
+            previousPinned: currentPinned,
+            by: req.user.id,
+        });
+
+        const io = req.app.get('io');
+        if (io) {
+            io.to(`chat_${chatId}`).emit('message_unpinned', {
+                chatId,
+                previousMessageId: currentPinned,
+                unpinnedBy: req.user.id,
+            });
+        }
+
+        res.json({ message: 'Сообщение откреплено' });
+    } catch (error) {
+        console.log('🔴 DELETE /api/chats/:chatId/pin ERROR:', error.message);
+        console.log('STACK:', error.stack);
+        logger.error('Ошибка открепления сообщения', error);
         res.status(500).json({ error: 'Ошибка сервера' });
     }
 });
@@ -659,7 +991,6 @@ router.put('/:id', authMiddleware, async (req, res) => {
 
         const { name, description, emoji, isPrivate } = req.body;
 
-        // 1. Проверка: существует ли чат и какого типа
         const chatCheck = await pool.query(
             'SELECT type, created_by FROM chats WHERE id = $1',
             [chatId]
@@ -671,16 +1002,12 @@ router.put('/:id', authMiddleware, async (req, res) => {
         const chatType = chatCheck.rows[0].type;
         const createdBy = chatCheck.rows[0].created_by;
 
-        // 🎯 Редактирование: только group или channel
         if (chatType !== 'channel' && chatType !== 'group') {
             return res.status(400).json({
                 error: 'Редактирование доступно только для каналов и групп',
             });
         }
 
-        // 🎯 Права:
-        //    - Канал: canManageChannel (создатель + командир/админ)
-        //    - Группа: создатель или командир/админ
         if (chatType === 'channel') {
             const canManage = await canManageChannel(chatId, req.user.id);
             if (!canManage) {
@@ -689,7 +1016,6 @@ router.put('/:id', authMiddleware, async (req, res) => {
                 });
             }
         } else {
-            // group
             const isCreator = createdBy === req.user.id;
             const isAdmin = await isCommanderOrHigher(req.user.id);
 
@@ -699,7 +1025,6 @@ router.put('/:id', authMiddleware, async (req, res) => {
                 });
             }
 
-            // 🎯 У группы нельзя менять is_private и emoji — игнорируем
             if (isPrivate !== undefined) {
                 console.log('  ⚠️ isPrivate проигнорирован для группы');
             }
@@ -729,7 +1054,6 @@ router.put('/:id', authMiddleware, async (req, res) => {
             updates.push(`description = $${idx++}`);
             values.push(description || null);
         }
-        // 🎯 emoji и isPrivate — только для каналов
         if (chatType === 'channel' && emoji !== undefined) {
             updates.push(`emoji = $${idx++}`);
             values.push(emoji);
@@ -942,7 +1266,6 @@ router.delete('/:id/members/:userId', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'Некорректный ID пользователя' });
         }
 
-        // 🎯 Проверка: это выход (себя) или удаление (другого)?
         const isSelfLeave = userId === req.user.id;
 
         if (!isSelfLeave) {
@@ -954,7 +1277,6 @@ router.delete('/:id/members/:userId', authMiddleware, async (req, res) => {
             }
         }
 
-        // 🎯 Создатель канала/группы не может выйти из своего чата
         const chatResult = await pool.query(
             'SELECT created_by, type FROM chats WHERE id = $1',
             [chatId]
@@ -972,7 +1294,6 @@ router.delete('/:id/members/:userId', authMiddleware, async (req, res) => {
             });
         }
 
-        // 🎯 Удаляем участника
         await pool.query(
             'DELETE FROM chat_members WHERE chat_id = $1 AND user_id = $2',
             [chatId, userId]

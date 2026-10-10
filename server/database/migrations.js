@@ -8,6 +8,9 @@
 // 🔔 Добавлена миграция fcm_token для push-уведомлений.
 // 🔕 Добавлена таблица chat_mutes (mute уведомлений).
 // 🔎 Добавлена миграция pg_trgm + GIN-индекс для поиска.
+// 🎨 Добавлены колонки chats.emoji и chats.is_private.
+// 📊 Добавлены таблицы голосований (polls / poll_options / poll_votes).
+// 📌 Добавлена колонка chats.pinned_message_id (закреплённое сообщение).
 //
 // ЗАПУСК:
 //   npm run migrate
@@ -128,7 +131,23 @@ async function runMigrations() {
         console.log('   ✅ Индекс idx_chat_mutes_user_id готов');
 
         // ─────────────────────────────────────────
-        // 6. 🔎 Расширение pg_trgm (для поиска по сообщениям)
+        // 6. 🎨 Колонки emoji и is_private в chats
+        // ─────────────────────────────────────────
+        console.log('');
+        console.log('📦 Миграция: chats.emoji + chats.is_private');
+
+        await pool.query(`
+            ALTER TABLE chats
+            ADD COLUMN IF NOT EXISTS emoji VARCHAR(20)
+        `);
+        await pool.query(`
+            ALTER TABLE chats
+            ADD COLUMN IF NOT EXISTS is_private BOOLEAN DEFAULT FALSE
+        `);
+        console.log('   ✅ Колонки emoji и is_private добавлены (или уже были)');
+
+        // ─────────────────────────────────────────
+        // 7. 🔎 Расширение pg_trgm (для поиска по сообщениям)
         // ─────────────────────────────────────────
         console.log('');
         console.log('📦 Миграция: расширение pg_trgm');
@@ -145,7 +164,7 @@ async function runMigrations() {
         }
 
         // ─────────────────────────────────────────
-        // 7. 🔎 GIN-индекс для поиска по тексту сообщений
+        // 8. 🔎 GIN-индекс для поиска по тексту сообщений
         // ─────────────────────────────────────────
         console.log('');
         console.log('📦 Миграция: idx_messages_text_trgm');
@@ -156,6 +175,92 @@ async function runMigrations() {
             WHERE is_deleted = FALSE
         `);
         console.log('   ✅ Индекс idx_messages_text_trgm готов');
+
+        // ─────────────────────────────────────────
+        // 9. 📊 Таблицы голосований (polls)
+        // ─────────────────────────────────────────
+        console.log('');
+        console.log('📦 Миграция: таблицы polls / poll_options / poll_votes');
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS polls (
+                id SERIAL PRIMARY KEY,
+                chat_id INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+                message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+                created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                question TEXT NOT NULL,
+                is_multiple BOOLEAN DEFAULT FALSE,
+                is_anonymous BOOLEAN DEFAULT FALSE,
+                is_closed BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                closed_at TIMESTAMPTZ
+            )
+        `);
+        console.log('   ✅ Таблица polls готова');
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS poll_options (
+                id SERIAL PRIMARY KEY,
+                poll_id INTEGER NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+                text TEXT NOT NULL,
+                position INTEGER NOT NULL DEFAULT 0
+            )
+        `);
+        console.log('   ✅ Таблица poll_options готова');
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS poll_votes (
+                id SERIAL PRIMARY KEY,
+                poll_id INTEGER NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+                option_id INTEGER NOT NULL REFERENCES poll_options(id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE (poll_id, option_id, user_id)
+            )
+        `);
+        console.log('   ✅ Таблица poll_votes готова');
+
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_polls_message_id
+            ON polls(message_id)
+        `);
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_polls_chat_id
+            ON polls(chat_id)
+        `);
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_poll_options_poll_id
+            ON poll_options(poll_id)
+        `);
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_poll_votes_poll_id
+            ON poll_votes(poll_id)
+        `);
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_poll_votes_user_id
+            ON poll_votes(user_id)
+        `);
+        console.log('   ✅ Индексы голосований готовы');
+
+        // ─────────────────────────────────────────
+        // 10. 📌 Закреплённое сообщение в чате
+        // ─────────────────────────────────────────
+        console.log('');
+        console.log('📦 Миграция: chats.pinned_message_id');
+
+        await pool.query(`
+            ALTER TABLE chats
+            ADD COLUMN IF NOT EXISTS pinned_message_id INTEGER
+              REFERENCES messages(id) ON DELETE SET NULL
+        `);
+        console.log('   ✅ Колонка pinned_message_id добавлена (или уже была)');
+
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_chats_pinned_message
+            ON chats(pinned_message_id)
+            WHERE pinned_message_id IS NOT NULL
+        `);
+        console.log('   ✅ Индекс idx_chats_pinned_message готов');
 
         // ─────────────────────────────────────────
         // Проверка
@@ -226,6 +331,39 @@ async function runMigrations() {
             console.log('');
             console.log('🔎 Индекс поиска:');
             console.log('   • idx_messages_text_trgm существует');
+        }
+
+        // Проверка колонок chats.emoji / chats.is_private / chats.pinned_message_id
+        const hasChatsExtras = await pool.query(`
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'chats'
+              AND column_name IN ('emoji', 'is_private', 'pinned_message_id')
+            ORDER BY column_name
+        `);
+
+        if (hasChatsExtras.rows.length > 0) {
+            console.log('');
+            console.log('🎨 Колонки chats:');
+            hasChatsExtras.rows.forEach((c) => {
+                console.log(`   • ${c.column_name}`);
+            });
+        }
+
+        // Проверка таблиц голосований
+        const hasPolls = await pool.query(`
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_name IN ('polls', 'poll_options', 'poll_votes')
+            ORDER BY table_name
+        `);
+
+        if (hasPolls.rows.length > 0) {
+            console.log('');
+            console.log('📊 Таблицы голосований:');
+            hasPolls.rows.forEach((t) => {
+                console.log(`   • ${t.table_name}`);
+            });
         }
 
         console.log('');

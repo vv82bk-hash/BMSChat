@@ -8,10 +8,14 @@
 // 🎯 otherUserAvatar / otherUserId: данные собеседника
 //    в личных чатах (для показа аватара в списке)
 // 🎯 isMuted: уведомления по чату заглушены?
+// 🎯 ПИНЫ: pinned_message_id + pinned_message (объект)
+//    для шапки закреплённого сообщения в чате
 //
 // 🔧 v2: _intToBool теперь парсит строки ('true', '1', 't')
 // 🎯 ЭТАП C.1: Telegram-формат даты и превью
 // =====================================================
+
+import 'message.dart';
 
 class Chat {
     // =====================================================
@@ -74,6 +78,17 @@ class Chat {
     final bool isMuted;
 
     // =====================================================
+    // 📌 ЗАКРЕПЛЁННОЕ СООБЩЕНИЕ
+    // =====================================================
+
+    /// 🎯 ID закреплённого сообщения (или null)
+    final int? pinnedMessageId;
+
+    /// 🎯 Полный объект закреплённого сообщения (или null)
+    /// Приходит с сервера как `pinned_message` в JSON.
+    final Message? pinnedMessage;
+
+    // =====================================================
     // 🏗️ КОНСТРУКТОР
     // =====================================================
 
@@ -101,6 +116,8 @@ class Chat {
         this.otherUserAvatar,
         this.otherUserId,
         this.isMuted = false,
+        this.pinnedMessageId,
+        this.pinnedMessage,
     });
 
     // =====================================================
@@ -136,6 +153,14 @@ class Chat {
             otherUserAvatar: json['other_user_avatar'] as String?,
             otherUserId: json['other_user_id'] as int?,
             isMuted: _intToBool(json['is_muted']),
+
+            // 📌 ПИН: парсим id и вложенный объект
+            pinnedMessageId: json['pinned_message_id'] as int?,
+            pinnedMessage: json['pinned_message'] != null
+                ? Message.fromJson(
+                    json['pinned_message'] as Map<String, dynamic>,
+                  )
+                : null,
         );
     }
 
@@ -167,6 +192,8 @@ class Chat {
             'other_user_avatar': otherUserAvatar,
             'other_user_id': otherUserId,
             'is_muted': isMuted ? 1 : 0,
+            'pinned_message_id': pinnedMessageId,
+            if (pinnedMessage != null) 'pinned_message': pinnedMessage!.toJson(),
         };
     }
 
@@ -198,6 +225,9 @@ class Chat {
         String? otherUserAvatar,
         int? otherUserId,
         bool? isMuted,
+        int? pinnedMessageId,
+        Message? pinnedMessage,
+        bool clearPinned = false,
     }) {
         return Chat(
             id: id ?? this.id,
@@ -223,6 +253,10 @@ class Chat {
             otherUserAvatar: otherUserAvatar ?? this.otherUserAvatar,
             otherUserId: otherUserId ?? this.otherUserId,
             isMuted: isMuted ?? this.isMuted,
+            pinnedMessageId:
+                clearPinned ? null : (pinnedMessageId ?? this.pinnedMessageId),
+            pinnedMessage:
+                clearPinned ? null : (pinnedMessage ?? this.pinnedMessage),
         );
     }
 
@@ -240,6 +274,49 @@ class Chat {
 
     /// Есть ли непрочитанные?
     bool get hasUnread => unreadCount > 0;
+
+    // =====================================================
+    // 📌 ГЕТТЕРЫ ДЛЯ ЗАКРЕПЛЁННОГО СООБЩЕНИЯ
+    // =====================================================
+
+    /// 🎯 Есть ли закреплённое сообщение?
+    bool get hasPinned => pinnedMessage != null;
+
+    /// 🎯 Готовое превью текста закрепа (с иконкой типа).
+    /// Возвращает null, если нет закрепа.
+    String? get pinnedPreview {
+        final msg = pinnedMessage;
+        if (msg == null) return null;
+
+        if (msg.isDeleted) return 'Сообщение удалено';
+        if (msg.isImageMessage) return '🖼 Фото';
+        if (msg.isVoiceMessage) return '🎤 Голосовое';
+        if (msg.isPollMessage) {
+            final q = msg.poll?.question;
+            return q != null ? '📊 $q' : '📊 Голосование';
+        }
+        if (msg.isFileMessage) {
+            final name = msg.fileDisplayName;
+            return name != null ? '📎 $name' : '📎 Файл';
+        }
+        final text = msg.text ?? '';
+        if (text.isEmpty) return '';
+        if (text.length > 80) {
+            return '${text.substring(0, 80)}...';
+        }
+        return text;
+    }
+
+    /// 🎯 Имя отправителя закреплённого сообщения.
+    String? get pinnedSenderName {
+        final msg = pinnedMessage;
+        if (msg == null) return null;
+        final name = msg.senderName?.trim();
+        if (name != null && name.isNotEmpty) return name;
+        final username = msg.senderUsername?.trim();
+        if (username != null && username.isNotEmpty) return username;
+        return null;
+    }
 
     // =====================================================
     // 🎯 ШАГ 7: НОВЫЕ ГЕТТЕРЫ ДЛЯ КАНАЛОВ
@@ -333,6 +410,9 @@ class Chat {
         if (text.startsWith('FILE:')) {
             return '📎 Файл';
         }
+        if (text.startsWith('POLL:')) {
+            return '📊 Голосование';
+        }
         if (text.startsWith('IMG:') || text.startsWith('/api/files/')) {
             return '🖼 Фото';
         }
@@ -359,26 +439,22 @@ class Chat {
             lastMessageAt!.day,
         );
 
-        // Сегодня → 14:30
         if (messageDay == today) {
             final hour = lastMessageAt!.hour.toString().padLeft(2, '0');
             final minute = lastMessageAt!.minute.toString().padLeft(2, '0');
             return '$hour:$minute';
         }
 
-        // Вчера → вчера
         if (messageDay == yesterday) {
             return 'вчера';
         }
 
-        // Эта неделя → Пн, Вт, ...
         final diffDays = today.difference(messageDay).inDays;
         if (diffDays >= 2 && diffDays < 7) {
             const weekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
             return weekdays[lastMessageAt!.weekday - 1];
         }
 
-        // Этот год → 12.09
         final day = lastMessageAt!.day.toString().padLeft(2, '0');
         final month = lastMessageAt!.month.toString().padLeft(2, '0');
 
@@ -386,7 +462,6 @@ class Chat {
             return '$day.$month';
         }
 
-        // Старше года → 12.09.24
         final year = (lastMessageAt!.year % 100).toString().padLeft(2, '0');
         return '$day.$month.$year';
     }
@@ -406,7 +481,6 @@ class Chat {
     // 🛠️ СТАТИЧЕСКИЕ МЕТОДЫ
     // =====================================================
 
-    /// 🎯 Парсинг bool: поддерживает bool, int (0/1), String ('true'/'1'/'t')
     static bool _intToBool(dynamic value) {
         if (value == null) return false;
         if (value is bool) return value;
@@ -425,7 +499,6 @@ class Chat {
         return null;
     }
 
-    /// 🎯 Парсинг эмодзи: если null, пусто или '??' — возвращаем null
     static String? _parseEmoji(dynamic value) {
         if (value == null) return null;
         final str = value.toString().trim();
@@ -443,7 +516,8 @@ class Chat {
         return 'Chat(id: $id, type: $type, title: $title, '
             'members: $membersCount, unread: $unreadCount, '
             'isPrivate: $isPrivate, isMember: $isMember, emoji: $emoji, '
-            'otherUserId: $otherUserId, isMuted: $isMuted)';
+            'otherUserId: $otherUserId, isMuted: $isMuted, '
+            'pinnedMessageId: $pinnedMessageId)';
     }
 
     @override
@@ -457,13 +531,14 @@ class Chat {
             other.isMember == isMember &&
             other.emoji == emoji &&
             other.otherUserAvatar == otherUserAvatar &&
-            other.isMuted == isMuted;
+            other.isMuted == isMuted &&
+            other.pinnedMessageId == pinnedMessageId;
     }
 
     @override
     int get hashCode => Object.hash(
         id, lastMessageId, unreadCount, isPrivate, isMember, emoji,
-        otherUserAvatar, isMuted,
+        otherUserAvatar, isMuted, pinnedMessageId,
     );
 }
 

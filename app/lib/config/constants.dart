@@ -107,6 +107,14 @@ class Constants {
     static const String messageTypeFile = 'file';
 
     // =====================================================
+    // 📊 ПОЛЛЫ (голосования)
+    // =====================================================
+    static const int pollQuestionMax = 300;
+    static const int pollOptionMax = 150;
+    static const int pollOptionsMin = 2;
+    static const int pollOptionsMax = 10;
+
+    // =====================================================
     // 🎭 РОЛИ
     // =====================================================
     static const String roleAdmin = 'Администратор';
@@ -220,6 +228,14 @@ class ApiEndpoints {
         '/messages/$messageId/reactions/$emoji';
 
     // ─────────────────────────────────────────
+    // 📊 ПОЛЛЫ
+    // ─────────────────────────────────────────
+    static String chatPolls(int chatId) => '/chats/$chatId/polls';
+    static String poll(int pollId) => '/polls/$pollId';
+    static String pollVote(int pollId) => '/polls/$pollId/vote';
+    static String pollClose(int pollId) => '/polls/$pollId/close';
+
+    // ─────────────────────────────────────────
     // 📤 ЗАГРУЗКА
     // ─────────────────────────────────────────
     static const String upload = '/upload';
@@ -270,6 +286,14 @@ class SocketEvents {
     static const String historyCleared = 'history_cleared';   // 🎯 CLEAR
     static const String reactionAdded = 'reaction_added';
     static const String reactionRemoved = 'reaction_removed';
+
+    // 📊 ПОЛЛЫ (сервер → клиент)
+    static const String pollUpdated = 'poll_updated';
+    static const String pollClosed = 'poll_closed';
+
+    // 📌 ЗАКРЕПЛЕНИЯ (сервер → клиент)
+    static const String messagePinned = 'message_pinned';
+    static const String messageUnpinned = 'message_unpinned';
 
     // 👑 ЗАЯВКИ
     static const String newRecruit = 'new_recruit';

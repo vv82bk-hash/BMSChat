@@ -23,6 +23,10 @@
 //    при свежем кэше + refreshFromServer для pull-to-refresh
 // 🎯 ДОКУМЕНТЫ: sendFile для file добавляет name и size
 //    в текст сообщения (формат: FILE:<path>|name=..|size=..)
+// 🎯 ПОЛЛЫ: createPoll / votePoll / unvotePoll / closePoll +
+//    обработка socket-событий poll_updated / poll_closed
+// 🎯 ПИНЫ: pinMessage / unpinMessage +
+//    обработка socket-событий message_pinned / message_unpinned
 // =====================================================
 
 import 'dart:async';
@@ -34,6 +38,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../config/constants.dart';
 import '../models/chat.dart';
 import '../models/message.dart';
+import '../models/poll.dart';
 import '../services/api_service.dart';
 import '../services/notification_service.dart';
 import '../services/socket_service.dart';
@@ -81,8 +86,6 @@ class ChatProvider extends ChangeNotifier {
     bool _isSearchLoading = false;
 
     // 🎯 ОПТИМИЗАЦИЯ: кэш сообщений по chatId
-    // 🎯 Уровень 1: TTL увеличен до 5 минут.
-    // Если кэш свежий — openChat не идёт в сеть вообще.
     final Map<int, _CachedMessages> _messagesCache = {};
     static const Duration _cacheTtl = Duration(minutes: 5);
 
@@ -104,6 +107,12 @@ class ChatProvider extends ChangeNotifier {
     StreamSubscription? _onlineCountSub;
     // 🎯 CLEAR: подписка на history_cleared
     StreamSubscription? _historyClearedSub;
+    // 🎯 ПОЛЛЫ: подписки на poll_updated / poll_closed
+    StreamSubscription? _pollUpdatedSub;
+    StreamSubscription? _pollClosedSub;
+    // 🎯 ПИНЫ: подписки на message_pinned / message_unpinned
+    StreamSubscription? _messagePinnedSub;
+    StreamSubscription? _messageUnpinnedSub;
 
     Timer? _myTypingTimer;
     Timer? _myTypingThrottleTimer;
@@ -157,7 +166,6 @@ class ChatProvider extends ChangeNotifier {
     // 🎯 ОПТИМИЗАЦИЯ: КЭШ СООБЩЕНИЙ
     // =====================================================
 
-    /// Возвращает кэш, если он есть и не протух, иначе null.
     List<Message>? getCachedMessages(int chatId) {
         final cached = _messagesCache[chatId];
         if (cached == null) return null;
@@ -168,8 +176,6 @@ class ChatProvider extends ChangeNotifier {
         return cached.messages;
     }
 
-    /// 🎯 Уровень 1: геттер — есть ли свежий кэш для чата.
-    /// Используется в openChat, чтобы не дёргать сеть.
     bool hasFreshCache(int chatId) {
         final cached = _messagesCache[chatId];
         if (cached == null) return false;
@@ -340,6 +346,24 @@ class ChatProvider extends ChangeNotifier {
         _historyClearedSub =
             SocketService.onHistoryCleared.listen(_handleHistoryCleared);
 
+        // 🎯 ПОЛЛЫ: подписки
+        _pollUpdatedSub?.cancel();
+        _pollUpdatedSub =
+            SocketService.onPollUpdated.listen(_handlePollUpdated);
+
+        _pollClosedSub?.cancel();
+        _pollClosedSub =
+            SocketService.onPollClosed.listen(_handlePollClosed);
+
+        // 🎯 ПИНЫ: подписки
+        _messagePinnedSub?.cancel();
+        _messagePinnedSub =
+            SocketService.onMessagePinned.listen(_handleMessagePinned);
+
+        _messageUnpinnedSub?.cancel();
+        _messageUnpinnedSub =
+            SocketService.onMessageUnpinned.listen(_handleMessageUnpinned);
+
         _userOnlineSub?.cancel();
         _userOnlineSub = SocketService.onUserOnline.listen((data) {
             final userId = data['userId'] as int?;
@@ -406,7 +430,6 @@ class ChatProvider extends ChangeNotifier {
                 );
                 _chatsError = null;
 
-                // 🎯 Синхронизируем mute-статусы с NotificationService
                 final mutedIds = _chats
                     .where((c) => c.isMuted)
                     .map((c) => c.id)
@@ -478,7 +501,6 @@ class ChatProvider extends ChangeNotifier {
             _hasMoreOld = true;
             _isLoadingMore = false;
 
-            // 🎯 Сбрасываем состояние поиска при открытии нового чата
             _resetSearchState();
 
             final cached = getCachedMessages(chatId);
@@ -502,9 +524,6 @@ class ChatProvider extends ChangeNotifier {
 
             notifyListeners();
 
-            // 🎯 УРОВЕНЬ 1: если кэш свежий — в сеть НЕ идём.
-            // Свежие сообщения придут по Socket.IO.
-            // Пользователь может принудительно обновить pull-to-refresh.
             if (hasFresh && cached != null && cached.isNotEmpty) {
                 AppLogger.info(
                     '✅ Кэш свежий (TTL ${_cacheTtl.inMinutes} мин) — '
@@ -532,7 +551,6 @@ class ChatProvider extends ChangeNotifier {
         _isLoadingMore = false;
         _isRefreshing = false;
 
-        // 🎯 Сбрасываем состояние поиска при закрытии чата
         _resetSearchState();
 
         notifyListeners();
@@ -540,9 +558,6 @@ class ChatProvider extends ChangeNotifier {
 
     // =====================================================
     // 🔄 PULL-TO-REFRESH (Уровень 1)
-    // =====================================================
-    // Принудительно тянет сообщения с сервера, минуя кэш.
-    // Вызывается из RefreshIndicator на экране чата.
     // =====================================================
     Future<void> refreshFromServer() async {
         if (_activeChat == null) return;
@@ -690,6 +705,330 @@ class ChatProvider extends ChangeNotifier {
         }
 
         _isSearchLoading = false;
+        notifyListeners();
+    }
+
+    // =====================================================
+    // 📊 ПОЛЛЫ (голосования)
+    // =====================================================
+
+    Future<Poll?> createPoll({
+        required String question,
+        required List<String> options,
+        bool isMultiple = false,
+        bool isAnonymous = false,
+    }) async {
+        if (_activeChat == null) {
+            AppLogger.warn('createPoll: нет активного чата');
+            return null;
+        }
+
+        final permissionError = canWriteToActiveChat();
+        if (permissionError != null) {
+            AppLogger.warn('Нет прав: $permissionError');
+            return null;
+        }
+
+        AppLogger.info('📊 Создание полла: "$question"');
+        _isSendingMessage = true;
+        notifyListeners();
+
+        try {
+            final response = await ApiService.createPoll(
+                _activeChat!.id,
+                question: question,
+                options: options,
+                isMultiple: isMultiple,
+                isAnonymous: isAnonymous,
+            );
+
+            if (!response.isSuccess || response.data == null) {
+                AppLogger.warn('Ошибка создания полла: ${response.error}');
+                _messagesError = response.error ?? 'Ошибка создания';
+                _isSendingMessage = false;
+                notifyListeners();
+                return null;
+            }
+
+            final poll = response.data!;
+            AppLogger.success(
+                'Полл создан: id=${poll.id}, вопрос="$question", '
+                'вариантов=${poll.options.length}'
+            );
+
+            _isSendingMessage = false;
+            notifyListeners();
+            return poll;
+        } catch (e) {
+            AppLogger.error('Ошибка создания полла', e);
+            _messagesError = 'Ошибка сети';
+            _isSendingMessage = false;
+            notifyListeners();
+            return null;
+        }
+    }
+
+    Future<bool> votePoll(int pollId, List<int> optionIds) async {
+        try {
+            final response = await ApiService.votePoll(pollId, optionIds);
+
+            if (!response.isSuccess || response.data == null) {
+                AppLogger.warn('Ошибка голосования: ${response.error}');
+                return false;
+            }
+
+            _updatePollInMessages(pollId, response.data!);
+            AppLogger.success('Голос отдан: poll=$pollId, options=$optionIds');
+            return true;
+        } catch (e) {
+            AppLogger.error('Ошибка голосования', e);
+            return false;
+        }
+    }
+
+    Future<bool> unvotePoll(int pollId) async {
+        try {
+            final response = await ApiService.unvotePoll(pollId);
+
+            if (!response.isSuccess || response.data == null) {
+                AppLogger.warn('Ошибка отмены голоса: ${response.error}');
+                return false;
+            }
+
+            _updatePollInMessages(pollId, response.data!);
+            AppLogger.success('Голос отменён: poll=$pollId');
+            return true;
+        } catch (e) {
+            AppLogger.error('Ошибка отмены голоса', e);
+            return false;
+        }
+    }
+
+    Future<bool> closePoll(int pollId) async {
+        try {
+            final response = await ApiService.closePoll(pollId);
+
+            if (!response.isSuccess || response.data == null) {
+                AppLogger.warn('Ошибка закрытия полла: ${response.error}');
+                return false;
+            }
+
+            _updatePollInMessages(pollId, response.data!);
+            AppLogger.success('Полл закрыт: poll=$pollId');
+            return true;
+        } catch (e) {
+            AppLogger.error('Ошибка закрытия полла', e);
+            return false;
+        }
+    }
+
+    Future<void> refreshPoll(int pollId) async {
+        try {
+            final response = await ApiService.getPoll(pollId);
+            if (response.isSuccess && response.data != null) {
+                _updatePollInMessages(pollId, response.data!);
+            }
+        } catch (e) {
+            AppLogger.error('Ошибка refreshPoll', e);
+        }
+    }
+
+    void _updatePollInMessages(int pollId, Poll updatedPoll) {
+        final index = _messages.indexWhere(
+            (m) => m.isPollMessage && m.pollId == pollId,
+        );
+        if (index < 0) {
+            AppLogger.debug(
+                'Полл $pollId не найден в _messages — обновление пропущено'
+            );
+            return;
+        }
+
+        _messages[index] = _messages[index].copyWith(poll: updatedPoll);
+
+        if (_activeChat != null) {
+            _cacheMessages(_activeChat!.id, _messages);
+        }
+
+        notifyListeners();
+    }
+
+    void _handlePollUpdated(Map<String, dynamic> data) {
+        final pollId = data['pollId'] as int?;
+        final pollJson = data['poll'] as Map<String, dynamic>?;
+
+        if (pollId == null || pollJson == null) return;
+
+        final updated = Poll.fromJson(pollJson);
+        _updatePollInMessages(pollId, updated);
+
+        AppLogger.debug('Полл #$pollId обновлён через socket');
+    }
+
+    void _handlePollClosed(Map<String, dynamic> data) {
+        final pollId = data['pollId'] as int?;
+        final pollJson = data['poll'] as Map<String, dynamic>?;
+
+        if (pollId == null) return;
+
+        if (pollJson != null) {
+            final updated = Poll.fromJson(pollJson);
+            _updatePollInMessages(pollId, updated);
+        }
+
+        AppLogger.info('Полл #$pollId закрыт (событие)');
+    }
+
+    // =====================================================
+    // 📌 ЗАКРЕПЛЁННОЕ СООБЩЕНИЕ
+    // =====================================================
+
+    /// Закрепить сообщение в активном чате.
+    /// При успехе обновляет _activeChat и _chats[idx].
+    Future<bool> pinMessage(int messageId) async {
+        if (_activeChat == null) {
+            AppLogger.warn('pinMessage: нет активного чата');
+            return false;
+        }
+
+        final chatId = _activeChat!.id;
+        AppLogger.info('📌 Закрепление сообщения #$messageId в чате #$chatId');
+
+        try {
+            final response =
+                await ApiService.pinMessage(chatId, messageId);
+
+            if (!response.isSuccess) {
+                AppLogger.warn('Ошибка pin: ${response.error}');
+                _messagesError = response.error ?? 'Не удалось закрепить';
+                notifyListeners();
+                return false;
+            }
+
+            // Ищем полный объект сообщения в текущем списке
+            final Message pinnedMsg = _messages.firstWhere(
+                (m) => m.id == messageId,
+                orElse: () => Message(
+                    id: messageId,
+                    chatId: chatId,
+                    senderId: 0,
+                    createdAt: DateTime.now(),
+                ),
+            );
+
+            // Обновляем _activeChat
+            _activeChat = _activeChat!.copyWith(
+                pinnedMessageId: messageId,
+                pinnedMessage: pinnedMsg,
+            );
+
+            // Обновляем в _chats (для списка чатов)
+            final idx = _chats.indexWhere((c) => c.id == chatId);
+            if (idx >= 0) {
+                _chats[idx] = _chats[idx].copyWith(
+                    pinnedMessageId: messageId,
+                    pinnedMessage: pinnedMsg,
+                );
+            }
+
+            _messagesError = null;
+            notifyListeners();
+
+            AppLogger.success('Сообщение #$messageId закреплено');
+            return true;
+        } catch (e) {
+            AppLogger.error('Ошибка pinMessage', e);
+            _messagesError = 'Ошибка сети';
+            notifyListeners();
+            return false;
+        }
+    }
+
+    /// Открепить сообщение в активном чате.
+    Future<bool> unpinMessage() async {
+        if (_activeChat == null) {
+            AppLogger.warn('unpinMessage: нет активного чата');
+            return false;
+        }
+
+        final chatId = _activeChat!.id;
+        AppLogger.info('📌 Открепление сообщения в чате #$chatId');
+
+        try {
+            final response = await ApiService.unpinMessage(chatId);
+
+            if (!response.isSuccess) {
+                AppLogger.warn('Ошибка unpin: ${response.error}');
+                _messagesError = response.error ?? 'Не удалось открепить';
+                notifyListeners();
+                return false;
+            }
+
+            // Обнуляем закреп в _activeChat
+            _activeChat = _activeChat!.copyWith(clearPinned: true);
+
+            // И в _chats
+            final idx = _chats.indexWhere((c) => c.id == chatId);
+            if (idx >= 0) {
+                _chats[idx] = _chats[idx].copyWith(clearPinned: true);
+            }
+
+            _messagesError = null;
+            notifyListeners();
+
+            AppLogger.success('Сообщение откреплено');
+            return true;
+        } catch (e) {
+            AppLogger.error('Ошибка unpinMessage', e);
+            _messagesError = 'Ошибка сети';
+            notifyListeners();
+            return false;
+        }
+    }
+
+    void _handleMessagePinned(Map<String, dynamic> data) {
+        final chatId = data['chatId'] as int?;
+        final messageId = data['messageId'] as int?;
+        final messageJson = data['message'] as Map<String, dynamic>?;
+
+        if (chatId == null || messageId == null) return;
+
+        final pinned =
+            messageJson != null ? Message.fromJson(messageJson) : null;
+
+        final idx = _chats.indexWhere((c) => c.id == chatId);
+        if (idx >= 0) {
+            _chats[idx] = _chats[idx].copyWith(
+                pinnedMessageId: messageId,
+                pinnedMessage: pinned,
+            );
+        }
+
+        if (_activeChat?.id == chatId) {
+            _activeChat = _activeChat!.copyWith(
+                pinnedMessageId: messageId,
+                pinnedMessage: pinned,
+            );
+        }
+
+        AppLogger.info('Сообщение #$messageId закреплено (событие)');
+        notifyListeners();
+    }
+
+    void _handleMessageUnpinned(Map<String, dynamic> data) {
+        final chatId = data['chatId'] as int?;
+        if (chatId == null) return;
+
+        final idx = _chats.indexWhere((c) => c.id == chatId);
+        if (idx >= 0) {
+            _chats[idx] = _chats[idx].copyWith(clearPinned: true);
+        }
+
+        if (_activeChat?.id == chatId) {
+            _activeChat = _activeChat!.copyWith(clearPinned: true);
+        }
+
+        AppLogger.info('Сообщение откреплено (событие)');
         notifyListeners();
     }
 
@@ -1496,9 +1835,6 @@ class ChatProvider extends ChangeNotifier {
                     prefix = 'FILE:';
             }
 
-            // 🎯 ДОКУМЕНТЫ: для файлов добавляем имя и размер в метаданные.
-            // Формат: FILE:/api/files/<id>|name=<encoded>|size=<bytes>
-            // Имя URL-encode — на случай кириллицы, пробелов, `|` и `=`.
             final String textWithPrefix;
             if (prefix == 'FILE:') {
                 final namePart = uploadedName != null && uploadedName.isNotEmpty
@@ -1967,6 +2303,10 @@ class ChatProvider extends ChangeNotifier {
         await _userOfflineSub?.cancel();
         await _onlineCountSub?.cancel();
         await _historyClearedSub?.cancel();
+        await _pollUpdatedSub?.cancel();
+        await _pollClosedSub?.cancel();
+        await _messagePinnedSub?.cancel();
+        await _messageUnpinnedSub?.cancel();
 
         _myTypingTimer?.cancel();
         _myTypingThrottleTimer?.cancel();
@@ -2013,6 +2353,10 @@ class ChatProvider extends ChangeNotifier {
         _userOfflineSub?.cancel();
         _onlineCountSub?.cancel();
         _historyClearedSub?.cancel();
+        _pollUpdatedSub?.cancel();
+        _pollClosedSub?.cancel();
+        _messagePinnedSub?.cancel();
+        _messageUnpinnedSub?.cancel();
 
         _myTypingTimer?.cancel();
         _myTypingThrottleTimer?.cancel();

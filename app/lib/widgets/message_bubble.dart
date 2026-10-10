@@ -13,6 +13,7 @@
 // 🎯 АВАТАР: мини-аватар рядом с именем отправителя
 // 🎯 ДОКУМЕНТЫ: карточка файла с иконкой по типу,
 //   именем, размером и открытием через FileDownloader
+// 🎯 ПОЛЛЫ: карточка голосования через PollMessageWidget
 // =====================================================
 
 import 'dart:ui' as ui;
@@ -26,6 +27,7 @@ import '../config/constants.dart';
 import '../models/message.dart';
 import '../services/file_downloader.dart';
 import '../themes/rasta_theme.dart';
+import 'poll_message_widget.dart';
 
 class MessageBubble extends StatelessWidget {
     final Message message;
@@ -169,6 +171,8 @@ class MessageBubble extends StatelessWidget {
                                         _buildVoice(message, isOwn)
                                     else if (message.isFileMessage)
                                         _buildFile(message, isOwn)
+                                    else if (message.isPollMessage)
+                                        _buildPoll(message)
                                     else
                                         _buildText(message, isOwn),
 
@@ -495,7 +499,6 @@ class MessageBubble extends StatelessWidget {
         return ClipRRect(
             borderRadius: BorderRadius.circular(14),
             child: InstaImageViewer(
-                // 🎯 Полноэкранный просмотр с зумом и свайпом вниз
                 child: _ProportionalImage(
                     url: url,
                     maxWidth: 280,
@@ -520,15 +523,37 @@ class MessageBubble extends StatelessWidget {
     // =====================================================
     // 📄 ФАЙЛ
     // =====================================================
-    // 🎯 ДОКУМЕНТЫ: карточка с иконкой по типу, именем,
-    // размером и кнопкой открытия.
-    // =====================================================
     Widget _buildFile(Message message, bool isOwn) {
         return _FileMessageWidget(
             filePath: message.filePath!,
             displayName: message.fileDisplayName,
             extension: message.fileExtension,
             formattedSize: message.formattedFileSize,
+            isOwn: isOwn,
+        );
+    }
+
+    // =====================================================
+    // 📊 ПОЛЛ
+    // =====================================================
+    Widget _buildPoll(Message message) {
+        final poll = message.poll;
+
+        if (poll == null) {
+            return Text(
+                '📊 Голосование',
+                style: TextStyle(
+                    fontSize: 14,
+                    fontStyle: FontStyle.italic,
+                    color: isOwn
+                        ? RastaTheme.bubbleOwnText.withValues(alpha: 0.7)
+                        : RastaTheme.bubbleOtherText.withValues(alpha: 0.7),
+                ),
+            );
+        }
+
+        return PollMessageWidget(
+            poll: poll,
             isOwn: isOwn,
         );
     }
@@ -556,9 +581,6 @@ class MessageBubble extends StatelessWidget {
 // =====================================================
 // 📄 ВИДЖЕТ ФАЙЛОВОГО СООБЩЕНИЯ
 // =====================================================
-// Карточка: иконка по типу + имя + размер + кнопка открытия.
-// Клик → FileDownloader.open() → SnackBar с результатом.
-// =====================================================
 
 class _FileMessageWidget extends StatefulWidget {
     final String filePath;
@@ -582,7 +604,6 @@ class _FileMessageWidget extends StatefulWidget {
 class _FileMessageWidgetState extends State<_FileMessageWidget> {
     bool _isOpening = false;
 
-    /// Иконка по расширению файла.
     IconData _fileIcon(String? ext) {
         switch (ext) {
             case '.pdf':
@@ -610,31 +631,30 @@ class _FileMessageWidgetState extends State<_FileMessageWidget> {
         }
     }
 
-    /// Цвет иконки по расширению.
     Color _fileColor(String? ext) {
         switch (ext) {
             case '.pdf':
-                return const Color(0xFFE53935); // красный
+                return const Color(0xFFE53935);
             case '.doc':
             case '.docx':
-                return const Color(0xFF1E88E5); // синий
+                return const Color(0xFF1E88E5);
             case '.xls':
             case '.xlsx':
-                return const Color(0xFF43A047); // зелёный
+                return const Color(0xFF43A047);
             case '.ppt':
             case '.pptx':
-                return const Color(0xFFFB8C00); // оранжевый
+                return const Color(0xFFFB8C00);
             case '.txt':
             case '.csv':
-                return const Color(0xFF757575); // серый
+                return const Color(0xFF757575);
             case '.zip':
             case '.rar':
             case '.7z':
-                return const Color(0xFFFB8C00); // оранжевый
+                return const Color(0xFFFB8C00);
             case '.apk':
-                return const Color(0xFF43A047); // зелёный
+                return const Color(0xFF43A047);
             default:
-                return RastaTheme.rastaYellow; // нейтральный
+                return RastaTheme.rastaYellow;
         }
     }
 
@@ -653,8 +673,6 @@ class _FileMessageWidgetState extends State<_FileMessageWidget> {
 
             switch (result.status) {
                 case FileOpenStatus.success:
-                    // Всё хорошо — системное приложение открылось.
-                    // SnackBar не нужен, чтобы не отвлекать.
                     break;
 
                 case FileOpenStatus.noApp:
@@ -705,7 +723,6 @@ class _FileMessageWidgetState extends State<_FileMessageWidget> {
         final ext = widget.extension?.replaceFirst('.', '').toUpperCase();
         final size = widget.formattedSize;
 
-        // Подстрока «PDF · 12.3 МБ» (или только одно из них)
         final subtitleParts = <String>[];
         if (ext != null && ext.isNotEmpty) subtitleParts.add(ext);
         if (size != null && size.isNotEmpty) subtitleParts.add(size);
@@ -738,7 +755,6 @@ class _FileMessageWidgetState extends State<_FileMessageWidget> {
                 child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                        // ── Иконка ──
                         Container(
                             width: 40,
                             height: 40,
@@ -757,7 +773,6 @@ class _FileMessageWidgetState extends State<_FileMessageWidget> {
 
                         const SizedBox(width: 10),
 
-                        // ── Имя + подстрока ──
                         Flexible(
                             child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -791,7 +806,6 @@ class _FileMessageWidgetState extends State<_FileMessageWidget> {
 
                         const SizedBox(width: 8),
 
-                        // ── Кнопка открытия / спиннер ──
                         if (_isOpening)
                             const SizedBox(
                                 width: 20,
@@ -977,10 +991,6 @@ class _ProportionalImageState extends State<_ProportionalImage> {
 // =====================================================
 // 🎤 ВИДЖЕТ ГОЛОСОВОГО СООБЩЕНИЯ
 // =====================================================
-// • Кнопка Play/Pause
-// • Таймер: текущая позиция / общая длительность
-// • Простая волна (фиксированной формы)
-// =====================================================
 
 class _VoiceMessageWidget extends StatefulWidget {
     final String url;
@@ -1076,7 +1086,6 @@ class _VoiceMessageWidgetState extends State<_VoiceMessageWidget> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-                // ── Кнопка Play / Pause ──
                 GestureDetector(
                     onTap: _togglePlay,
                     child: Container(
@@ -1111,7 +1120,6 @@ class _VoiceMessageWidgetState extends State<_VoiceMessageWidget> {
 
                 const SizedBox(width: 10),
 
-                // ── Волна (фиксированная) ──
                 SizedBox(
                     width: 120,
                     height: 32,
@@ -1128,7 +1136,6 @@ class _VoiceMessageWidgetState extends State<_VoiceMessageWidget> {
 
                 const SizedBox(width: 10),
 
-                // ── Таймер ──
                 Text(
                     _isLoading
                         ? '--:--'
@@ -1151,9 +1158,6 @@ class _VoiceMessageWidgetState extends State<_VoiceMessageWidget> {
 // =====================================================
 // 🎨 ПРОСТАЯ ВОЛНА (фиксированная форма)
 // =====================================================
-// Рисует набор вертикальных полосок. Прогресс отображается
-// цветом: пройденная часть — ярче, оставшаяся — бледнее.
-// =====================================================
 
 class _WaveformPainter extends CustomPainter {
     final double progress;
@@ -1164,7 +1168,6 @@ class _WaveformPainter extends CustomPainter {
         required this.color,
     });
 
-    // Высоты полосок (0.0 – 1.0), фиксированные — «как в Telegram»
     static const List<double> _bars = [
         0.30, 0.55, 0.75, 0.45, 0.90, 0.60, 0.35, 0.80,
         0.50, 0.70, 0.40, 0.85, 0.55, 0.30, 0.65, 0.45,

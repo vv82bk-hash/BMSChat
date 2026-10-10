@@ -60,7 +60,7 @@ class _UsersScreenState extends State<UsersScreen> {
             backgroundColor: RastaTheme.background,
             appBar: AppBar(
                 // 🎯 ЭТАП A: скрываем кнопку «Назад» — экран теперь вкладка
-                automaticallyImplyLeading: false,
+                automaticallyImplyLeading: Navigator.of(context).canPop(),
                 title: const Text('Команда'),
                 actions: [
                     IconButton(

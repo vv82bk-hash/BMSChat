@@ -616,7 +616,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
                             const SizedBox(width: 10),
                             const Expanded(
                                 child: Text(
-                                    'Bob Marley Squad',
+                                    'ОБМ',
                                     style: TextStyle(
                                         fontSize: 19,
                                         fontWeight: FontWeight.w700,

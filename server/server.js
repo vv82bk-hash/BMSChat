@@ -19,10 +19,14 @@ const { initSocket } = require('./socket');
 const app = express();
 
 app.use(cors({
+    // CORS нужен только для Web-клиента. На Android/iOS CORS не применяется.
+    // origin: '*' — для разработки; в продакшене сузить до конкретного домена.
     origin: config.CORS_ORIGIN || '*',
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    // 🎯 PATCH добавлен — без него preflight для PATCH (смена профиля) падал.
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
-    credentials: true,
+    // credentials: true несовместим с origin: '*'. Для JWT в Authorization
+    // он не нужен — убираем.
 }));
 
 app.use(express.json({ limit: '10mb' }));
@@ -90,6 +94,10 @@ app.use('/api/upload', uploadRoutes);
 const filesRoutes = require('./routes/files');
 app.use('/api/files', filesRoutes);
 
+// 🎯 ГОЛОСОВАНИЯ
+const pollsRoutes = require('./routes/polls');
+app.use('/api/polls', pollsRoutes);
+
 logger.info('Роуты подключены', {
     routes: [
         '/api/auth',
@@ -98,6 +106,7 @@ logger.info('Роуты подключены', {
         '/api/messages',
         '/api/upload',
         '/api/files',
+        '/api/polls',
     ],
 });
 
@@ -158,6 +167,7 @@ async function start() {
             console.log(`📡 API:       http://localhost:${PORT}/api`);
             console.log(`🔌 WebSocket: ws://localhost:${PORT}`);
             console.log(`📁 Files:     http://localhost:${PORT}/api/files/:id`);
+            console.log(`📊 Polls:     http://localhost:${PORT}/api/polls/:id`);
             console.log(`🌍 CORS:      ${config.CORS_ORIGIN}`);
             console.log(`💾 БД:        PostgreSQL (файлы в БД)`);
             console.log('');

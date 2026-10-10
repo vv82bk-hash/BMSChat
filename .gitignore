@@ -19,6 +19,8 @@
 .env.production
 .env.test
 *.env
+*.env.bak
+*.env.*.bak
 
 # Но шаблон .env.example — загружаем (без секретов)
 !.env.example

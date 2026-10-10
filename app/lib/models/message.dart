@@ -1,15 +1,14 @@
 // =====================================================
 // 📝 BMSChat — МОДЕЛЬ СООБЩЕНИЯ
 // =====================================================
-// 🎯 ЭТАП B.3: добавлен геттер displayPreview —
-//   для превью цитируемого сообщения (reply preview)
-// 🎯 ДОКУМЕНТЫ: парсинг метаданных из текста для FILE:
-//   Формат: FILE:/api/files/<id>|name=<encoded>|size=<bytes>
-//   Геттеры: fileDisplayName, fileSize, fileExtension,
-//   formattedFileSize, isApkMessage, isArchiveMessage, isDocMessage
+// 🎯 ЭТАП B.3: геттер displayPreview — превью для цитаты.
+// 🎯 ДОКУМЕНТЫ: парсинг метаданных из FILE:.
+// 🎯 ПОЛЛЫ: поддержка сообщений типа POLL:<id>.
+//   В объект Message встроено поле poll (Poll?).
 // =====================================================
 
 import 'package:intl/intl.dart';
+import 'poll.dart';
 
 class Message {
     // =====================================================
@@ -27,7 +26,6 @@ class Message {
     final DateTime? updatedAt;
 
     /// 🎯 Прочитано ли получателем?
-    /// true — прочитано (✓✓), false — отправлено (✓)
     final bool isRead;
 
     // Данные отправителя
@@ -39,9 +37,8 @@ class Message {
     final List<Reaction> reactions;
     final List<Attachment> attachments;
 
-    // =====================================================
-    // 🏗️ КОНСТРУКТОР
-    // =====================================================
+    // 🎯 ПОЛЛ: встроенный объект голосования (если тип POLL:)
+    final Poll? poll;
 
     const Message({
         required this.id,
@@ -59,6 +56,7 @@ class Message {
         this.senderAvatar,
         this.reactions = const [],
         this.attachments = const [],
+        this.poll,
     });
 
     // =====================================================
@@ -89,6 +87,9 @@ class Message {
             attachments: (json['attachments'] as List<dynamic>?)
                 ?.map((a) => Attachment.fromJson(a as Map<String, dynamic>))
                 .toList() ?? [],
+            poll: json['poll'] != null
+                ? Poll.fromJson(json['poll'] as Map<String, dynamic>)
+                : null,
         );
     }
 
@@ -110,6 +111,7 @@ class Message {
             'is_read': isRead ? 1 : 0,
             'reactions': reactions.map((r) => r.toJson()).toList(),
             'attachments': attachments.map((a) => a.toJson()).toList(),
+            if (poll != null) 'poll': poll!.toJson(),
         };
     }
 
@@ -133,6 +135,7 @@ class Message {
         String? senderAvatar,
         List<Reaction>? reactions,
         List<Attachment>? attachments,
+        Poll? poll,
     }) {
         return Message(
             id: id ?? this.id,
@@ -150,6 +153,7 @@ class Message {
             senderAvatar: senderAvatar ?? this.senderAvatar,
             reactions: reactions ?? this.reactions,
             attachments: attachments ?? this.attachments,
+            poll: poll ?? this.poll,
         );
     }
 
@@ -161,15 +165,19 @@ class Message {
     String get displayText {
         if (isDeleted) return 'Сообщение удалено';
         if (isFileMessage) return '';
+        if (isPollMessage) return '';
         return text ?? '';
     }
 
-    /// 🎯 ЭТАП B.3: превью для цитаты в reply.
-    /// 🎯 ДОКУМЕНТЫ: для файла показываем имя файла, если есть.
+    /// 🎯 Превью для цитаты в reply.
     String get displayPreview {
         if (isDeleted) return 'Сообщение удалено';
         if (isImageMessage) return '🖼 Фото';
         if (isVoiceMessage) return '🎤 Голосовое';
+        if (isPollMessage) {
+            final q = poll?.question;
+            return q != null ? '📊 $q' : '📊 Голосование';
+        }
         if (isFileMessage) {
             final name = fileDisplayName;
             return name != null ? '📎 $name' : '📎 Файл';
@@ -189,8 +197,8 @@ class Message {
         return null;
     }
 
-    /// 🎯 ДОКУМЕНТЫ: путь к файлу без метаданных.
-    /// Для IMG/VOICE — как было. Для FILE — обрезаем по `|`.
+    /// 🎯 Путь к файлу (для IMG/VOICE/FILE).
+    /// POLL: не является файлом — возвращает null.
     String? get filePath {
         if (text == null || text!.isEmpty) return null;
 
@@ -200,7 +208,6 @@ class Message {
         }
         if (prefix == 'FILE:') {
             final raw = text!.substring('FILE:'.length);
-            // Обрезаем метаданные (name=..., size=...)
             final pipeIdx = raw.indexOf('|');
             return pipeIdx >= 0 ? raw.substring(0, pipeIdx) : raw;
         }
@@ -214,14 +221,28 @@ class Message {
     }
 
     // =====================================================
-    // 🎯 ДОКУМЕНТЫ: ПАРСИНГ МЕТАДАННЫХ
-    // =====================================================
-    // Формат: FILE:/api/files/abc|name=Отчёт.pdf|size=123456
-    // Имя может быть URL-encoded (кириллица, пробелы, спецсимволы).
+    // 📊 ПОЛЛ
     // =====================================================
 
-    /// Приватный разбор метаданных из текста `FILE:...`.
-    /// Возвращает `{name: String?, size: int?}` или пустой Map.
+    /// 🎯 Это сообщение-голосование?
+    /// Считается поллом, если текст начинается с "POLL:".
+    bool get isPollMessage {
+        if (text == null || text!.isEmpty) return false;
+        return text!.startsWith('POLL:');
+    }
+
+    /// 🎯 ID полла, извлечённый из текста "POLL:<id>".
+    /// Возвращает null, если это не полл.
+    int? get pollId {
+        if (!isPollMessage) return null;
+        final raw = text!.substring('POLL:'.length).trim();
+        return int.tryParse(raw);
+    }
+
+    // =====================================================
+    // 📄 МЕТАДАННЫЕ ФАЙЛА
+    // =====================================================
+
     Map<String, dynamic> get _fileMetadata {
         if (_filePrefix != 'FILE:') return const {};
 
@@ -243,7 +264,7 @@ class Message {
                 try {
                     name = Uri.decodeComponent(value);
                 } catch (_) {
-                    name = value; // fallback: как есть
+                    name = value;
                 }
             } else if (key == 'size') {
                 size = int.tryParse(value);
@@ -253,22 +274,18 @@ class Message {
         return {'name': name, 'size': size};
     }
 
-    /// 🎯 Читаемое имя файла.
-    /// Приоритет: `name=` из метаданных → последний сегмент пути.
     String? get fileDisplayName {
         if (!isFileMessage) return null;
         if (_filePrefix == 'FILE:') {
             final name = _fileMetadata['name'] as String?;
             if (name != null && name.isNotEmpty) return name;
         }
-        // Fallback: последний сегмент пути
         final path = filePath;
         if (path == null || path.isEmpty) return null;
         final segments = path.split('/');
         return segments.isNotEmpty ? segments.last : null;
     }
 
-    /// 🎯 Размер файла в байтах, если известен.
     int? get fileSize {
         if (!isFileMessage) return null;
         if (_filePrefix == 'FILE:') {
@@ -277,7 +294,6 @@ class Message {
         return null;
     }
 
-    /// 🎯 Расширение файла в lowercase (включая точку). Например: `.pdf`.
     String? get fileExtension {
         final name = fileDisplayName;
         if (name == null) return null;
@@ -286,7 +302,6 @@ class Message {
         return name.substring(dot).toLowerCase();
     }
 
-    /// 🎯 Размер в человекочитаемом виде: «512 Б» / «345 КБ» / «12.3 МБ».
     String? get formattedFileSize {
         final size = fileSize;
         if (size == null) return null;
@@ -297,6 +312,10 @@ class Message {
         }
         return '${(size / 1024 / 1024).toStringAsFixed(1)} МБ';
     }
+
+    // =====================================================
+    // 🖼 ТИПЫ СООБЩЕНИЙ
+    // =====================================================
 
     bool get isImageMessage {
         if (_filePrefix == 'IMG:') return true;
@@ -334,21 +353,15 @@ class Message {
     }
 
     bool get isFileMessage => filePath != null;
-    bool get isTextMessage => filePath == null;
+    bool get isTextMessage => filePath == null && !isPollMessage;
 
-    /// 🎯 APK-файл
-    bool get isApkMessage {
-        final ext = fileExtension;
-        return ext == '.apk';
-    }
+    bool get isApkMessage => fileExtension == '.apk';
 
-    /// 🎯 Архив (ZIP/RAR/7Z)
     bool get isArchiveMessage {
         final ext = fileExtension;
         return ext == '.zip' || ext == '.rar' || ext == '.7z';
     }
 
-    /// 🎯 Документ Office/PDF
     bool get isDocMessage {
         final ext = fileExtension;
         return ext == '.pdf' ||
@@ -366,17 +379,10 @@ class Message {
     // 🛠️ ГЕТТЕРЫ ОТОБРАЖЕНИЯ
     // =====================================================
 
-    String get formattedTime {
-        return DateFormat('HH:mm').format(createdAt);
-    }
-
-    String get formattedDate {
-        return DateFormat('dd.MM.yyyy').format(createdAt);
-    }
-
-    String get formattedDateTime {
-        return DateFormat('dd.MM.yyyy HH:mm').format(createdAt);
-    }
+    String get formattedTime => DateFormat('HH:mm').format(createdAt);
+    String get formattedDate => DateFormat('dd.MM.yyyy').format(createdAt);
+    String get formattedDateTime =>
+        DateFormat('dd.MM.yyyy HH:mm').format(createdAt);
 
     bool get hasAttachments => attachments.isNotEmpty;
     bool get hasReactions => reactions.isNotEmpty;
@@ -410,13 +416,10 @@ class Message {
         return null;
     }
 
-    // =====================================================
-    // 🔍 ОТЛАДКА
-    // =====================================================
-
     @override
     String toString() {
-        return 'Message(id: $id, chatId: $chatId, senderId: $senderId, isRead: $isRead)';
+        return 'Message(id: $id, chatId: $chatId, senderId: $senderId, '
+            'isRead: $isRead, isPoll: $isPollMessage)';
     }
 
     @override

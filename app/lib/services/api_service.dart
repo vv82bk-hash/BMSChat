@@ -8,6 +8,8 @@
 // 🎯 MUTE: muteChat() + unmuteChat()
 // 🎯 ПОИСК: searchMessages() — поиск по сообщениям в чате
 // 🎯 CLEAR: clearChatHistory() — soft-delete истории чата
+// 🎯 ПОЛЛЫ: createPoll / getPoll / votePoll / unvotePoll / closePoll
+// 🎯 ПИНЫ: pinMessage / unpinMessage — закреплённое сообщение
 // =====================================================
 
 import 'dart:async';
@@ -21,6 +23,7 @@ import '../config/constants.dart';
 import '../models/user.dart';
 import '../models/chat.dart';
 import '../models/message.dart';
+import '../models/poll.dart';
 import '../utils/app_logger.dart';
 import 'storage_service.dart';
 
@@ -629,8 +632,6 @@ class ApiService {
     // =====================================================
     // 🔕 MUTE УВЕДОМЛЕНИЙ ПО ЧАТУ
     // =====================================================
-    // Заглушает уведомления от чата (push + локальные).
-    // =====================================================
     static Future<ApiResponse<void>> muteChat(int chatId) async {
         final response = await _post('/chats/$chatId/mute');
 
@@ -644,8 +645,6 @@ class ApiService {
     // =====================================================
     // 🔔 UNMUTE УВЕДОМЛЕНИЙ ПО ЧАТУ
     // =====================================================
-    // Включает уведомления от чата обратно.
-    // =====================================================
     static Future<ApiResponse<void>> unmuteChat(int chatId) async {
         final response = await _delete('/chats/$chatId/mute');
 
@@ -654,6 +653,50 @@ class ApiService {
         }
 
         return ApiResponse.error(response.error!, statusCode: response.statusCode);
+    }
+
+    // =====================================================
+    // 📌 ЗАКРЕПЛЁННЫЕ СООБЩЕНИЯ
+    // =====================================================
+
+    /// Закрепить сообщение в чате.
+    /// POST /api/chats/:chatId/pin
+    /// Возвращает id закреплённого сообщения.
+    static Future<ApiResponse<int>> pinMessage(
+        int chatId,
+        int messageId,
+    ) async {
+        final response = await _post(
+            '/chats/$chatId/pin',
+            body: {'message_id': messageId},
+        );
+
+        if (response.isSuccess) {
+            final data = response.data as Map<String, dynamic>?;
+            final pinnedId =
+                data?['pinned_message_id'] as int? ?? messageId;
+            return ApiResponse.success(pinnedId);
+        }
+
+        return ApiResponse.error(
+            response.error!,
+            statusCode: response.statusCode,
+        );
+    }
+
+    /// Открепить сообщение.
+    /// DELETE /api/chats/:chatId/pin
+    static Future<ApiResponse<void>> unpinMessage(int chatId) async {
+        final response = await _delete('/chats/$chatId/pin');
+
+        if (response.isSuccess) {
+            return ApiResponse.success(null);
+        }
+
+        return ApiResponse.error(
+            response.error!,
+            statusCode: response.statusCode,
+        );
     }
 
     // =====================================================
@@ -691,9 +734,6 @@ class ApiService {
 
     // =====================================================
     // 🔎 ПОИСК СООБЩЕНИЙ В ЧАТЕ
-    // =====================================================
-    // GET /api/messages/:chatId/search?q=...&limit=30&before=<id>
-    // Возвращает постранично найденные сообщения (новые сверху).
     // =====================================================
     static Future<ApiResponse<SearchResponse>> searchMessages(
         int chatId,
@@ -733,9 +773,6 @@ class ApiService {
 
     // =====================================================
     // 🧹 ОЧИСТКА ИСТОРИИ ЧАТА (soft-delete)
-    // =====================================================
-    // POST /api/chats/:chatId/clear
-    // Возвращает количество помеченных как удалённые сообщений.
     // =====================================================
     static Future<ApiResponse<int>> clearChatHistory(int chatId) async {
         final response = await _post('/chats/$chatId/clear');
@@ -831,6 +868,124 @@ class ApiService {
         if (response.isSuccess) {
             return ApiResponse.success(null);
         }
+        return ApiResponse.error(response.error!, statusCode: response.statusCode);
+    }
+
+    // =====================================================
+    // 📊 ГОЛОСОВАНИЯ
+    // =====================================================
+
+    /// Создать голосование в чате.
+    /// POST /api/chats/:chatId/polls
+    static Future<ApiResponse<Poll>> createPoll(
+        int chatId, {
+        required String question,
+        required List<String> options,
+        bool isMultiple = false,
+        bool isAnonymous = false,
+    }) async {
+        final response = await _post(
+            '/chats/$chatId/polls',
+            body: {
+                'question': question,
+                'options': options,
+                'is_multiple': isMultiple,
+                'is_anonymous': isAnonymous,
+            },
+        );
+
+        if (response.isSuccess) {
+            final data = response.data as Map<String, dynamic>;
+            final pollJson = data['poll'] as Map<String, dynamic>?;
+            if (pollJson == null) {
+                return ApiResponse.error('Некорректный ответ сервера',
+                    statusCode: response.statusCode);
+            }
+            return ApiResponse.success(
+                Poll.fromJson(pollJson),
+                statusCode: response.statusCode,
+            );
+        }
+
+        return ApiResponse.error(response.error!, statusCode: response.statusCode);
+    }
+
+    /// Получить голосование с результатами.
+    /// GET /api/polls/:id
+    static Future<ApiResponse<Poll>> getPoll(int pollId) async {
+        final response = await _get('/polls/$pollId');
+
+        if (response.isSuccess) {
+            final data = response.data as Map<String, dynamic>;
+            final pollJson = data['poll'] as Map<String, dynamic>?;
+            if (pollJson == null) {
+                return ApiResponse.error('Некорректный ответ сервера',
+                    statusCode: response.statusCode);
+            }
+            return ApiResponse.success(Poll.fromJson(pollJson));
+        }
+
+        return ApiResponse.error(response.error!, statusCode: response.statusCode);
+    }
+
+    /// Проголосовать.
+    /// POST /api/polls/:id/vote
+    /// [optionIds] — массив, даже если один вариант.
+    static Future<ApiResponse<Poll>> votePoll(
+        int pollId,
+        List<int> optionIds,
+    ) async {
+        final response = await _post(
+            '/polls/$pollId/vote',
+            body: {'option_ids': optionIds},
+        );
+
+        if (response.isSuccess) {
+            final data = response.data as Map<String, dynamic>;
+            final pollJson = data['poll'] as Map<String, dynamic>?;
+            if (pollJson == null) {
+                return ApiResponse.error('Некорректный ответ сервера',
+                    statusCode: response.statusCode);
+            }
+            return ApiResponse.success(Poll.fromJson(pollJson));
+        }
+
+        return ApiResponse.error(response.error!, statusCode: response.statusCode);
+    }
+
+    /// Убрать свой голос.
+    /// DELETE /api/polls/:id/vote
+    static Future<ApiResponse<Poll>> unvotePoll(int pollId) async {
+        final response = await _delete('/polls/$pollId/vote');
+
+        if (response.isSuccess) {
+            final data = response.data as Map<String, dynamic>;
+            final pollJson = data['poll'] as Map<String, dynamic>?;
+            if (pollJson == null) {
+                return ApiResponse.error('Некорректный ответ сервера',
+                    statusCode: response.statusCode);
+            }
+            return ApiResponse.success(Poll.fromJson(pollJson));
+        }
+
+        return ApiResponse.error(response.error!, statusCode: response.statusCode);
+    }
+
+    /// Закрыть голосование.
+    /// POST /api/polls/:id/close
+    static Future<ApiResponse<Poll>> closePoll(int pollId) async {
+        final response = await _post('/polls/$pollId/close');
+
+        if (response.isSuccess) {
+            final data = response.data as Map<String, dynamic>;
+            final pollJson = data['poll'] as Map<String, dynamic>?;
+            if (pollJson == null) {
+                return ApiResponse.error('Некорректный ответ сервера',
+                    statusCode: response.statusCode);
+            }
+            return ApiResponse.success(Poll.fromJson(pollJson));
+        }
+
         return ApiResponse.error(response.error!, statusCode: response.statusCode);
     }
 

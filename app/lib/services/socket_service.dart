@@ -9,6 +9,8 @@
 //   • Реакции, редактирование, удаление
 //   • 👑 Уведомления о новых новобранцах
 //   • 🧹 Очистка истории чата (history_cleared)
+//   • 📊 Голосования (poll_updated, poll_closed)
+//   • 📌 Закрепления (message_pinned, message_unpinned)
 // 🎯 FIX: transports ['websocket', 'polling'] — fallback для мобильных.
 // =====================================================
 
@@ -96,6 +98,28 @@ class SocketService {
     static Stream<Map<String, dynamic>> get onHistoryCleared =>
         _historyClearedController.stream;
 
+    // 🎯 ПОЛЛЫ: обновление и закрытие голосований
+    static final _pollUpdatedController =
+        StreamController<Map<String, dynamic>>.broadcast();
+    static Stream<Map<String, dynamic>> get onPollUpdated =>
+        _pollUpdatedController.stream;
+
+    static final _pollClosedController =
+        StreamController<Map<String, dynamic>>.broadcast();
+    static Stream<Map<String, dynamic>> get onPollClosed =>
+        _pollClosedController.stream;
+
+    // 🎯 ПИНЫ: закрепление / открепление сообщения
+    static final _messagePinnedController =
+        StreamController<Map<String, dynamic>>.broadcast();
+    static Stream<Map<String, dynamic>> get onMessagePinned =>
+        _messagePinnedController.stream;
+
+    static final _messageUnpinnedController =
+        StreamController<Map<String, dynamic>>.broadcast();
+    static Stream<Map<String, dynamic>> get onMessageUnpinned =>
+        _messageUnpinnedController.stream;
+
     static final _reactionAddedController =
         StreamController<Map<String, dynamic>>.broadcast();
     static Stream<Map<String, dynamic>> get onReactionAdded =>
@@ -148,16 +172,14 @@ class SocketService {
             _socket = io.io(
                 Constants.socketUrl,
                 io.OptionBuilder()
-                    // 🎯 FIX: WebSocket + polling fallback.
-                    // Polling — через HTTP, мобильный оператор НЕ блокирует.
                     .setTransports(['websocket', 'polling'])
                     .setAuth({'token': token})
                     .enableForceNew()
                     .enableReconnection()
-                    .setReconnectionAttempts(20)     // 🎯 было 5
-                    .setReconnectionDelay(1000)      // 🎯 1 сек
-                    .setReconnectionDelayMax(5000)   // 🎯 до 5 сек
-                    .setTimeout(20000)               // 🎯 20 сек
+                    .setReconnectionAttempts(20)
+                    .setReconnectionDelay(1000)
+                    .setReconnectionDelayMax(5000)
+                    .setTimeout(20000)
                     .build(),
             );
 
@@ -281,6 +303,38 @@ class SocketService {
             }
         });
 
+        // 📊 Голосование обновлено (новый голос)
+        _socket!.on(SocketEvents.pollUpdated, (data) {
+            if (data is Map) {
+                AppLogger.socket('📊 Полл обновлён', data['pollId']);
+                _pollUpdatedController.add(Map<String, dynamic>.from(data));
+            }
+        });
+
+        // 🔒 Голосование закрыто
+        _socket!.on(SocketEvents.pollClosed, (data) {
+            if (data is Map) {
+                AppLogger.socket('🔒 Полл закрыт', data['pollId']);
+                _pollClosedController.add(Map<String, dynamic>.from(data));
+            }
+        });
+
+        // 📌 Сообщение закреплено
+        _socket!.on(SocketEvents.messagePinned, (data) {
+            if (data is Map) {
+                AppLogger.socket('📌 Сообщение закреплено', data['messageId']);
+                _messagePinnedController.add(Map<String, dynamic>.from(data));
+            }
+        });
+
+        // 📌 Сообщение откреплено
+        _socket!.on(SocketEvents.messageUnpinned, (data) {
+            if (data is Map) {
+                AppLogger.socket('📌 Сообщение откреплено', data['chatId']);
+                _messageUnpinnedController.add(Map<String, dynamic>.from(data));
+            }
+        });
+
         // 😀 Реакция добавлена
         _socket!.on(SocketEvents.reactionAdded, (data) {
             if (data is Map) {
@@ -395,6 +449,10 @@ class SocketService {
         _messageEditedController.close();
         _messageDeletedController.close();
         _historyClearedController.close();
+        _pollUpdatedController.close();
+        _pollClosedController.close();
+        _messagePinnedController.close();
+        _messageUnpinnedController.close();
         _reactionAddedController.close();
         _reactionRemovedController.close();
         _onlineCountController.close();

@@ -1,8 +1,14 @@
 // =====================================================
 // 🎯 BMSChat — ТОЧКА ВХОДА
 // =====================================================
+// 🎯 WEB-FIX: Firebase инициализируется только на мобильных.
+// На Web нет google-services.json / GoogleService-Info.plist,
+// поэтому Firebase.initializeApp() без options падает с
+// "FirebaseOptions cannot be null when creating the default app".
+// =====================================================
 
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -35,11 +41,15 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 void main() async {
     WidgetsFlutterBinding.ensureInitialized();
 
-    // 🎯 Firebase — обязательно ДО NotificationService
-    await Firebase.initializeApp();
-
-    // 🎯 Инициализация уведомлений (FCM + локальные)
-    await NotificationService.init();
+    // 🎯 Firebase — только на мобильных (Android/iOS).
+    // На Web нет options — Firebase падает без явных
+    // FirebaseOptions, а они у нас не настроены под web.
+    // Push-уведомления на web всё равно требуют отдельной
+    // настройки (Service Worker + HTTPS), поэтому пропускаем.
+    if (!kIsWeb) {
+        await Firebase.initializeApp();
+        await NotificationService.init();
+    }
 
     SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
