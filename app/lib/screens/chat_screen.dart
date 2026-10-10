@@ -27,6 +27,9 @@
 // 🎯 ДОКУМЕНТЫ: выбор и отправка файлов через file_picker
 // 🎯 ПОЛЛЫ: пункт «Голосование» в меню 📎 + CreatePollScreen
 // 🎯 ПИНЫ: шапка закреплённого + пункт «Закрепить/Открепить»
+// 🎯 РАЗДЕЛЕНИЕ МЕНЮ: 📎 — Голосование + Документ,
+//    📷 — Фото из галереи + Сделать фото
+// 🎯 FIX (overflow): меню ⋮ — isScrollControlled + maxHeight 80% + скролл
 // =====================================================
 
 import 'dart:async';
@@ -399,7 +402,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     // ============================================
-    // 📎 ВЫБОР ФАЙЛА
+    // 📎 СКРЕПКА — ГОЛОСОВАНИЕ + ДОКУМЕНТ
     // ============================================
     Future<void> _pickFile() async {
         _showInputPanel();
@@ -426,7 +429,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                         const SizedBox(height: 16),
                         const Text(
-                            'Отправить',
+                            'Прикрепить',
                             style: TextStyle(
                                 fontSize: 18,
                                 fontWeight: FontWeight.w700,
@@ -434,38 +437,8 @@ class _ChatScreenState extends State<ChatScreen> {
                             ),
                         ),
                         const SizedBox(height: 8),
-                        ListTile(
-                            leading: const Icon(
-                                Icons.photo_library_outlined,
-                                color: RastaTheme.rastaYellow,
-                                size: 28,
-                            ),
-                            title: const Text(
-                                'Фото из галереи',
-                                style: TextStyle(
-                                    color: RastaTheme.textPrimary,
-                                    fontSize: 16,
-                                ),
-                            ),
-                            onTap: () =>
-                                Navigator.pop(context, _FileAction.gallery),
-                        ),
-                        ListTile(
-                            leading: const Icon(
-                                Icons.camera_alt_outlined,
-                                color: RastaTheme.rastaYellow,
-                                size: 28,
-                            ),
-                            title: const Text(
-                                'Сделать фото',
-                                style: TextStyle(
-                                    color: RastaTheme.textPrimary,
-                                    fontSize: 16,
-                                ),
-                            ),
-                            onTap: () =>
-                                Navigator.pop(context, _FileAction.camera),
-                        ),
+
+                        // 🎯 ГОЛОСОВАНИЕ
                         ListTile(
                             leading: const Icon(
                                 Icons.poll_outlined,
@@ -482,6 +455,8 @@ class _ChatScreenState extends State<ChatScreen> {
                             onTap: () =>
                                 Navigator.pop(context, _FileAction.poll),
                         ),
+
+                        // 🎯 ДОКУМЕНТ
                         ListTile(
                             leading: const Icon(
                                 Icons.insert_drive_file_outlined,
@@ -498,6 +473,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             onTap: () =>
                                 Navigator.pop(context, _FileAction.document),
                         ),
+
                         const SizedBox(height: 8),
                     ],
                 ),
@@ -515,11 +491,100 @@ class _ChatScreenState extends State<ChatScreen> {
             await _pickDocument();
             return;
         }
+    }
+
+    // ============================================
+    // 📷 ФОТОАППАРАТ — ГАЛЕРЕЯ + КАМЕРА
+    // ============================================
+    Future<void> _pickCamera() async {
+        _showInputPanel();
+
+        final action = await showModalBottomSheet<_FileAction>(
+            context: context,
+            backgroundColor: RastaTheme.surface,
+            shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            builder: (_) => SafeArea(
+                child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                        const SizedBox(height: 8),
+                        Container(
+                            width: 40,
+                            height: 4,
+                            decoration: BoxDecoration(
+                                color:
+                                    RastaTheme.textMuted.withValues(alpha: 0.4),
+                                borderRadius: BorderRadius.circular(2),
+                            ),
+                        ),
+                        const SizedBox(height: 16),
+                        const Text(
+                            'Отправить фото',
+                            style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                color: RastaTheme.textPrimary,
+                            ),
+                        ),
+                        const SizedBox(height: 8),
+
+                        // 🎯 ГАЛЕРЕЯ
+                        ListTile(
+                            leading: const Icon(
+                                Icons.photo_library_outlined,
+                                color: RastaTheme.rastaYellow,
+                                size: 28,
+                            ),
+                            title: const Text(
+                                'Фото из галереи',
+                                style: TextStyle(
+                                    color: RastaTheme.textPrimary,
+                                    fontSize: 16,
+                                ),
+                            ),
+                            onTap: () =>
+                                Navigator.pop(context, _FileAction.gallery),
+                        ),
+
+                        // 🎯 КАМЕРА
+                        ListTile(
+                            leading: const Icon(
+                                Icons.camera_alt_outlined,
+                                color: RastaTheme.rastaYellow,
+                                size: 28,
+                            ),
+                            title: const Text(
+                                'Сделать фото',
+                                style: TextStyle(
+                                    color: RastaTheme.textPrimary,
+                                    fontSize: 16,
+                                ),
+                            ),
+                            onTap: () =>
+                                Navigator.pop(context, _FileAction.camera),
+                        ),
+
+                        const SizedBox(height: 8),
+                    ],
+                ),
+            ),
+        );
+
+        if (action == null || !mounted) return;
 
         final ImageSource source = action == _FileAction.gallery
             ? ImageSource.gallery
             : ImageSource.camera;
 
+        await _pickImage(source);
+    }
+
+    // ============================================
+    // 🖼 ГАЛЕРЕЯ / КАМЕРА — ОТПРАВКА ФОТО
+    // ============================================
+    Future<void> _pickImage(ImageSource source) async {
         try {
             final XFile? image = await _imagePicker.pickImage(
                 source: source,
@@ -528,8 +593,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 maxHeight: 1280,
             );
 
-            if (image == null) return;
-            if (!mounted) return;
+            if (image == null || !mounted) return;
 
             _showInfo('Загрузка...');
 
@@ -769,13 +833,6 @@ class _ChatScreenState extends State<ChatScreen> {
         );
 
         _onTextChanged(newText);
-    }
-
-    // ============================================
-    // 📷 КАМЕРА
-    // ============================================
-    void _pickCamera() {
-        _pickFile();
     }
 
     void _onTextChanged(String text) {
@@ -1224,6 +1281,7 @@ class _ChatScreenState extends State<ChatScreen> {
         final action = await showModalBottomSheet<String>(
             context: context,
             backgroundColor: Colors.transparent,
+            isScrollControlled: true,
             builder: (_) => Container(
                 decoration: const BoxDecoration(
                     color: RastaTheme.surface,
@@ -1231,98 +1289,104 @@ class _ChatScreenState extends State<ChatScreen> {
                         top: Radius.circular(20),
                     ),
                 ),
+                constraints: BoxConstraints(
+                    maxHeight: MediaQuery.of(context).size.height * 0.8,
+                ),
                 child: SafeArea(
-                    child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                            const SizedBox(height: 8),
-                            Container(
-                                width: 40,
-                                height: 4,
-                                decoration: BoxDecoration(
-                                    color: RastaTheme.textMuted
-                                        .withValues(alpha: 0.4),
-                                    borderRadius: BorderRadius.circular(2),
-                                ),
-                            ),
-                            const SizedBox(height: 8),
-
-                            _menuTile(
-                                icon: Icons.people_outline,
-                                title: 'Участники',
-                                onTap: () =>
-                                    Navigator.pop(context, 'members'),
-                            ),
-
-                            _menuTile(
-                                icon: Icons.info_outline,
-                                title: 'Информация о чате',
-                                onTap: () =>
-                                    Navigator.pop(context, 'info'),
-                            ),
-
-                            _menuTile(
-                                icon: Icons.search,
-                                title: 'Поиск в чате',
-                                onTap: () => Navigator.pop(context, 'search'),
-                            ),
-
-                            _menuTile(
-                                icon: chat.isMuted
-                                    ? Icons.notifications_active_outlined
-                                    : Icons.notifications_off_outlined,
-                                title: chat.isMuted
-                                    ? 'Включить уведомления'
-                                    : 'Отключить уведомления',
-                                onTap: () =>
-                                    Navigator.pop(context, 'toggle_mute'),
-                            ),
-
-                            _menuTile(
-                                icon: Icons.cleaning_services_outlined,
-                                title: 'Очистить историю',
-                                onTap: () =>
-                                    Navigator.pop(context, 'clear'),
-                            ),
-
-                            if (chat.isChannel && canManage)
-                                _menuTile(
-                                    icon: Icons.settings_outlined,
-                                    title: 'Настройки канала',
-                                    onTap: () =>
-                                        Navigator.pop(context, 'settings'),
-                                ),
-
-                            if (chat.isGroup && _canManageGroup(chat))
-                                _menuTile(
-                                    icon: Icons.settings_outlined,
-                                    title: 'Настройки группы',
-                                    onTap: () => Navigator.pop(
-                                        context,
-                                        'group_settings',
+                    child: SingleChildScrollView(
+                        child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                                const SizedBox(height: 8),
+                                Container(
+                                    width: 40,
+                                    height: 4,
+                                    decoration: BoxDecoration(
+                                        color: RastaTheme.textMuted
+                                            .withValues(alpha: 0.4),
+                                        borderRadius: BorderRadius.circular(2),
                                     ),
                                 ),
+                                const SizedBox(height: 8),
 
-                            if (chat.isChannel && canLeave)
                                 _menuTile(
-                                    icon: Icons.logout,
-                                    title: 'Покинуть канал',
-                                    color: RastaTheme.error,
+                                    icon: Icons.people_outline,
+                                    title: 'Участники',
                                     onTap: () =>
-                                        Navigator.pop(context, 'leave'),
+                                        Navigator.pop(context, 'members'),
                                 ),
 
-                            if (canLeaveGroupOnly)
                                 _menuTile(
-                                    icon: Icons.logout,
-                                    title: 'Покинуть группу',
-                                    color: RastaTheme.error,
+                                    icon: Icons.info_outline,
+                                    title: 'Информация о чате',
                                     onTap: () =>
-                                        Navigator.pop(context, 'leave'),
+                                        Navigator.pop(context, 'info'),
                                 ),
 
-                            const SizedBox(height: 8),
-                        ],
+                                _menuTile(
+                                    icon: Icons.search,
+                                    title: 'Поиск в чате',
+                                    onTap: () =>
+                                        Navigator.pop(context, 'search'),
+                                ),
+
+                                _menuTile(
+                                    icon: chat.isMuted
+                                        ? Icons.notifications_active_outlined
+                                        : Icons.notifications_off_outlined,
+                                    title: chat.isMuted
+                                        ? 'Включить уведомления'
+                                        : 'Отключить уведомления',
+                                    onTap: () =>
+                                        Navigator.pop(context, 'toggle_mute'),
+                                ),
+
+                                _menuTile(
+                                    icon: Icons.cleaning_services_outlined,
+                                    title: 'Очистить историю',
+                                    onTap: () =>
+                                        Navigator.pop(context, 'clear'),
+                                ),
+
+                                if (chat.isChannel && canManage)
+                                    _menuTile(
+                                        icon: Icons.settings_outlined,
+                                        title: 'Настройки канала',
+                                        onTap: () =>
+                                            Navigator.pop(context, 'settings'),
+                                    ),
+
+                                if (chat.isGroup && _canManageGroup(chat))
+                                    _menuTile(
+                                        icon: Icons.settings_outlined,
+                                        title: 'Настройки группы',
+                                        onTap: () => Navigator.pop(
+                                            context,
+                                            'group_settings',
+                                        ),
+                                    ),
+
+                                if (chat.isChannel && canLeave)
+                                    _menuTile(
+                                        icon: Icons.logout,
+                                        title: 'Покинуть канал',
+                                        color: RastaTheme.error,
+                                        onTap: () =>
+                                            Navigator.pop(context, 'leave'),
+                                    ),
+
+                                if (canLeaveGroupOnly)
+                                    _menuTile(
+                                        icon: Icons.logout,
+                                        title: 'Покинуть группу',
+                                        color: RastaTheme.error,
+                                        onTap: () =>
+                                            Navigator.pop(context, 'leave'),
+                                    ),
+
+                                const SizedBox(height: 8),
+                            ],
+                        ),
                     ),
                 ),
             ),
@@ -2209,7 +2273,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                     _quickAction(
                         icon: Icons.camera_alt_outlined,
-                        tooltip: 'Камера',
+                        tooltip: 'Фото',
                         onTap: _pickCamera,
                     ),
                     _quickAction(
